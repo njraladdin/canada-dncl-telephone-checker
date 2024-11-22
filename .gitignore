@@ -37,3 +37,11 @@ temp/
 camoufox_data/
 chrome-data3/
 chrome-data2/
+chrome-data4/
+chrome-data5/
+
+
+
+# Database files
+*.db
+
