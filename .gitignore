@@ -33,3 +33,7 @@ coverage/
 chrome-data/
 dist/
 build/
+temp/
+camoufox_data/
+chrome-data3/
+chrome-data2/
