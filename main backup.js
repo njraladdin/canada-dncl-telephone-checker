@@ -20,12 +20,25 @@ if (/^win/i.test(osPlatform)) {
     executablePath = "/usr/bin/google-chrome";
 }
 
-const ALLOW_PROXY = false;
-const PHONE_NUMBER = '514-519-5990';
+const ALLOW_PROXY = true;
+const PHONE_NUMBERS = [
+    '514-519-5990', '514-298-4761', '613-324-6266',
+    '514-947-1271', '514-443-3423', '514-862-0122',
+    '416-938-4616', '450-558-9278', '514-206-0848',
+    '514-962-3884', '819-860-6532', '514-975-3641',
+    '514-605-8392', '514-949-6404', '418-951-4916',
+    '581-234-3734', '438-994-6354', '514-795-4732',
+    '514-913-3606', '613-295-4115', '514-823-7290',
+    '514-606-9032', '514-805-5930', '418-569-7631',
+    '514-235-9565', '514-466-5735', '571-488-9969',
+    '819-859-2345', '613-513-8852', '514-269-3401',
+    '450-880-0946', '514-243-4065', '514-946-1212',
+    '514-594-6553', '514-209-2613', '418-802-1100',
+    '819-856-3071', '514-572-1544'
+];
 const proxyUrl = `premium-residential.geonode.com:9009`;
-const TOTAL_ATTEMPTS_WANTED = 12; // Set this to your desired number of attempts
 
-// Move results object declaration to the top level, before any function declarations
+// Add at the top with other constants
 const results = {
     successful: [],
     failed: [],
@@ -43,18 +56,10 @@ const results = {
         const avgTimeSuccess = this.successTimes.length ? 
             (this.successTimes.reduce((a, b) => a + b, 0) / this.successTimes.length).toFixed(2) : 0;
         
-        // Calculate estimated time remaining
-        const remainingAttempts = TOTAL_ATTEMPTS_WANTED - (this.successful.length + this.failed.length);
-        const estimatedSecondsRemaining = remainingAttempts * avgTimeAll;
-        const estimatedMinutesRemaining = (estimatedSecondsRemaining / 60).toFixed(1);
-        const estimatedHoursRemaining = (estimatedSecondsRemaining / 3600).toFixed(1);
-        
         return {
             totalTime: totalTime.toFixed(2),
             avgTimeAll,
-            avgTimeSuccess,
-            estimatedMinutesRemaining,
-            estimatedHoursRemaining
+            avgTimeSuccess
         };
     }
 };
@@ -73,29 +78,23 @@ function getDefaultChromeUserDataDir() {
 
 async function scrapeWebsite() {
     try {
-        const batchSize = 3;
-        const totalBatches = Math.ceil(TOTAL_ATTEMPTS_WANTED / batchSize);
-        let globalAttemptCount = 0;
-        let completedAttemptCount = 0;  // New counter for completed attempts
+        // Initial browser setup
+        let browser = await launchBrowser();
+        let currentIndex = 0;
 
-        for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
-            console.log(`\n=== Starting Batch ${batchNum + 1}/${totalBatches} ===`);
-            
-            let browser = await launchBrowser();
-            console.log('Launched new browser for batch');
+        while (currentIndex < PHONE_NUMBERS.length) {
+            const remainingNumbers = PHONE_NUMBERS.slice(currentIndex);
+            const batch = remainingNumbers.slice(0, 3);
+            console.log(`Processing batch starting at index ${currentIndex}: ${batch.join(', ')}`);
 
-            const batchAttempts = Math.min(batchSize, TOTAL_ATTEMPTS_WANTED - globalAttemptCount);
-            
             try {
-                // Create a Map to track completed attempts in this batch
-                const completedAttempts = new Map();
-                
-                console.log(`Opening ${batchAttempts} pages simultaneously...`);
-                const pagePromises = Array(batchAttempts).fill(0).map(async (_, index) => {
-                    const page = await browser.newPage();
-                    
+                const promises = batch.map(async (phoneNumber, index) => {
+                    let page;
                     try {
+                        page = await browser.newPage();
+                        
                         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+
                         if (ALLOW_PROXY) {
                             await page.authenticate({
                                 username: process.env.PROXY_USERNAME,
@@ -103,96 +102,127 @@ async function scrapeWebsite() {
                             });
                         }
 
-                        console.log(`\nProcessing tab ${index + 1} of batch ${batchNum + 1}`);
-                        const success = await attemptCaptcha(page, PHONE_NUMBER);
-                        
-                        // Increment completed count and update results atomically
-                        completedAttemptCount++;
-                        if (success) {
-                            results.successful.push(new Date().toISOString());
-                            consecutiveFailures = 0;
-                        } else {
-                            results.failed.push(new Date().toISOString());
-                            consecutiveFailures++;
-                        }
-
-                        // Log progress after each individual completion
-                        console.log(`\n=== PROGRESS UPDATE (Completed: ${completedAttemptCount}) ===`);
-                        console.log(`Success rate: ${results.getSuccessRate()}%`);
-                        console.log(`Total successful tokens: ${results.successful.length}`);
-                        console.log(`Failed attempts: ${results.failed.length}`);
-                        console.log(`Average time per success: ${results.getTimeStats().avgTimeSuccess} seconds`);
-                        console.log(`Remaining attempts: ${TOTAL_ATTEMPTS_WANTED - completedAttemptCount}`);
-                        console.log(`Estimated time remaining: ${results.getTimeStats().estimatedHoursRemaining}h (${results.getTimeStats().estimatedMinutesRemaining}m)`);
-                        console.log('========================\n');
-
-                    } catch (error) {
-                        completedAttemptCount++;
-                        console.error(`Error in tab ${index + 1}:`, error);
-                        results.failed.push(new Date().toISOString());
-                        consecutiveFailures++;
-                    } finally {
+                        // Move page setup into a separate try-catch block
                         try {
-                            await page.close().catch(() => {});
-                        } catch (e) {
-                            console.log('Error closing page:', e.message);
+                            await page.evaluateOnNewDocument(() => {
+                                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                                Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+                                Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+                                
+                                window.chrome = {
+                                    runtime: {}
+                                };
+                                
+                                const originalQuery = window.navigator.permissions.query;
+                                window.navigator.permissions.query = (parameters) => (
+                                    parameters.name === 'notifications' ?
+                                    Promise.resolve({ state: Notification.permission }) :
+                                    originalQuery(parameters)
+                                );
+                            });
+
+                            const success = await attemptCaptcha(page, phoneNumber);
+                            if (success) {
+                                consecutiveFailures = 0;
+                                results.successful.push(phoneNumber);
+                            } else {
+                                results.failed.push(phoneNumber);
+                                consecutiveFailures++;
+                            }
+                        } catch (error) {
+                            console.error(`Error processing ${phoneNumber}:`, error);
+                            results.failed.push(phoneNumber);
+                            consecutiveFailures++;
+                        } finally {
+                            if (page) {
+                                try {
+                                    await page.close().catch(() => {});
+                                } catch (e) {
+                                    console.log('Error closing page:', e.message);
+                                }
+                            }
                         }
+                    } catch (error) {
+                        console.error(`Error processing ${phoneNumber}:`, error);
+                        results.failed.push(phoneNumber);
+                        consecutiveFailures++;
                     }
                 });
 
-                // Wait for all pages to complete
-                await Promise.all(pagePromises);
-                console.log(`Successfully processed ${batchAttempts} pages in parallel`);
+                await Promise.all(promises);
+                console.log(`\n=== BATCH RESULTS (Index: ${currentIndex}) ===`);
+                console.log(`Successful numbers so far (${results.successful.length}):`, results.successful.join(', '));
+                console.log(`Failed numbers so far (${results.failed.length}):`, results.failed.join(', '));
+                console.log(`Current success rate: ${results.getSuccessRate()}%`);
+                console.log('==========================================\n');
 
-                // Update global attempt count after batch complete
-                globalAttemptCount += batchAttempts;
-
-                // Log batch summary
-                console.log(`\n=== BATCH ${batchNum + 1} COMPLETE ===`);
-                console.log(`Total attempts completed: ${completedAttemptCount}/${TOTAL_ATTEMPTS_WANTED}`);
-                console.log(`Overall success rate: ${results.getSuccessRate()}%`);
-                console.log(`Total successful tokens: ${results.successful.length}`);
-                console.log(`Total failed attempts: ${results.failed.length}`);
-                console.log(`Remaining attempts: ${TOTAL_ATTEMPTS_WANTED - completedAttemptCount}`);
-                console.log('========================\n');
-
-            } finally {
-                // Close browser at end of batch
-                try {
-                    await browser.close().catch(() => {});
-                    console.log('Successfully closed browser for batch');
-                } catch (e) {
-                    console.log('Error closing browser:', e.message);
+                // Check if we need to restart browser after batch completion
+                if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                    console.log(`${MAX_CONSECUTIVE_FAILURES} consecutive failures reached. Restarting browser...`);
+                    try {
+                        await browser.close().catch(() => {});
+                    } catch (e) {
+                        console.log('Error closing browser:', e.message);
+                    }
+                    
+                    // Add delay before launching new browser
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    
+                    try {
+                        browser = await launchBrowser();
+                        console.log('Successfully launched new browser');
+                        consecutiveFailures = 0;
+                    } catch (e) {
+                        console.error('Failed to launch new browser:', e);
+                        // If we can't launch a new browser, wait and try again
+                        await new Promise(resolve => setTimeout(resolve, 5000));
+                        browser = await launchBrowser();
+                    }
                 }
+
+                currentIndex += 3;
                 
-                // Add small delay between batches
+            } catch (batchError) {
+                console.error('Batch processing error:', batchError);
+                // If batch fails, increment index by 1 instead of 3 to retry failed numbers
+                currentIndex += 1;
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
         }
 
-        // Final results after all attempts
+        // Final cleanup
+        try {
+            await browser.close().catch(() => {});
+        } catch (e) {
+            console.log('Error closing browser at end:', e.message);
+        }
+        
+        // Log final results
         console.log('\n=== FINAL RESULTS ===');
         const timeStats = results.getTimeStats();
-        console.log(`Total Attempts: ${TOTAL_ATTEMPTS_WANTED}`);
-        console.log(`Successful tokens: ${results.successful.length}`);
-        console.log(`Failed attempts: ${results.failed.length}`);
-        console.log(`Final success rate: ${results.getSuccessRate()}%`);
-        console.log(`Total time: ${timeStats.totalTime} seconds`);
-        console.log(`Average time per success: ${timeStats.avgTimeSuccess} seconds`);
-        console.log('===================\n');
-
+        console.log(`\nTiming Statistics:`);
+        console.log(`Total Time: ${timeStats.totalTime} seconds`);
+        console.log(`Average Time Per Number: ${timeStats.avgTimeAll} seconds`);
+        console.log(`Average Time Per Successful Number: ${timeStats.avgTimeSuccess} seconds`);
+        console.log(`\nSuccessful numbers (${results.successful.length}):`);
+        console.log(results.successful.join('\n'));
+        console.log(`\nFailed numbers (${results.failed.length}):`);
+        console.log(results.failed.join('\n'));
+        console.log(`\nSuccess rate: ${results.getSuccessRate()}%`);
+        console.log('\n===================');
+        
     } catch (error) {
-        console.error('Fatal error:', error);
+        console.error('An error occurred:', error);
     }
 }
 
 // Helper function to launch browser with existing configuration
 async function launchBrowser() {
-    const randomProfile = Math.floor(Math.random() * 10) + 1; // Random number between 1-5
+    const randomProfile = Math.floor(Math.random() * 6) + 1; // Random number between 1-5
     return await puppeteerExtra.launch({
-        headless: "new",
+        headless: true,
         executablePath: executablePath,
-        userDataDir:getDefaultChromeUserDataDir(),// 
+        userDataDir: './chrome-data3',//getDefaultChromeUserDataDir(),// 
         args: [
             '--no-sandbox',
             '--disable-gpu',
@@ -369,28 +399,57 @@ async function solveCaptchaChallenge(page) {
 async function attemptCaptcha(page, phoneNumber) {
     const startTime = Date.now();
     try {
-        // Navigate to the initial page
-        console.log(`Loading registration check page...`);
+        // Navigate directly to registration check page
+        console.log(`Loading registration check page for ${phoneNumber}...`);
         await page.goto('https://lnnte-dncl.gc.ca/en/Consumer/Check-your-registration/#!/', {
             waitUntil: 'domcontentloaded',
             timeout: 120000
         });
 
-        // Instead of typing and clicking, directly manipulate the Angular state and form
-        await page.evaluate((phone) => {
-            // Get the Angular scope
-            const scope = angular.element(document.querySelector('[ng-show="state==\'number\'"]')).scope();
+        // // Add a 30 second delay
+        // console.log('Waiting 30 seconds...');
+        // await new Promise(resolve => setTimeout(resolve, 30000));
+        // console.log('30 second wait completed');
+        // More robust phone number input handling
+        const phoneInput = await page.waitForSelector('#phone');
+        await page.evaluate(() => document.querySelector('#phone').focus());
+        
+        // Clear the input first
+        await page.click('#phone', { clickCount: 3 }); // Triple click to select all
+        await page.keyboard.press('Backspace');
+
+        // Type the number with verification
+        let attempts = 0;
+        const maxAttempts = 3;
+        
+        while (attempts < maxAttempts) {
+            await page.type('#phone', phoneNumber, { delay: 100 });
             
-            // Set the phone number in the model
-            scope.model = scope.model || {};
-            scope.model.phone = phone;
+            // Verify the input value
+            const inputValue = await page.$eval('#phone', el => el.value);
+            if (inputValue === phoneNumber) {
+                console.log(`Successfully entered phone number: ${phoneNumber}`);
+                break;
+            } else {
+                console.log(`Failed to enter number correctly. Attempt ${attempts + 1}. Got: ${inputValue}`);
+                // Clear and try again
+                await page.click('#phone', { clickCount: 3 });
+                await page.keyboard.press('Backspace');
+            }
+            attempts++;
             
-            // Update the state to skip to next page
-            scope.state = 'confirm';
-            
-            // Apply the changes
-            scope.$apply();
-        }, phoneNumber);
+            if (attempts === maxAttempts) {
+                console.error(`Failed to enter phone number after ${maxAttempts} attempts: ${phoneNumber}`);
+                return false;
+            }
+        }
+
+        // Add small random delay (500-1500ms) before clicking next button
+        await new Promise(resolve => setTimeout(resolve, 500 + Math.floor(Math.random() * 1000)));
+        
+        // Click the next button
+        await page.click('button[type="submit"]');
+        console.log('Clicked next button to proceed to captcha page');
 
         // Wait for element that confirms we're on next page
         await page.waitForSelector('#wb-auto-2 > form > div > div:nth-child(3) > div', {
@@ -450,11 +509,14 @@ async function attemptCaptcha(page, phoneNumber) {
                 await new Promise(resolve => setTimeout(resolve, 500 + Math.floor(Math.random() * 1000)));
                 
                 // Try both click methods immediately
-             
+                try {
+                    await recaptchaFrame.click(selector, { delay: rdn(30, 150) });
+                } catch (error) {
+                    console.log('Standard click failed, trying evaluate click...');
                     await recaptchaFrame.evaluate(selector => {
                         document.querySelector(selector).click();
                     }, selector);
-                
+                }
                 console.log('Clicked recaptcha checkbox');
 
                 // Add a small delay to allow the popup to appear
@@ -522,6 +584,12 @@ async function attemptCaptcha(page, phoneNumber) {
                         const solvedToken = await solveCaptchaChallenge(page);
                         if (solvedToken) {
                             console.log('Successfully solved captcha and got token');
+                            
+                            // Launch API request without awaiting it
+                            sendApiRequest(solvedToken, phoneNumber).catch(error => {
+                                console.error('API Request Error:', error.message);
+                            });
+                            
                             return true;
                         }
                         
@@ -530,6 +598,12 @@ async function attemptCaptcha(page, phoneNumber) {
                     }
 
                     console.log('reCAPTCHA token received:', token);
+
+                    // Launch API request without awaiting it
+                    sendApiRequest(token, phoneNumber).catch(error => {
+                        console.error('API Request Error:', error.message);
+                    });
+
                     console.log(`Successfully got token for ${phoneNumber}`);
                     return true;
 
@@ -553,25 +627,74 @@ async function attemptCaptcha(page, phoneNumber) {
     }
 }
 
+// Separate function for API request
+async function sendApiRequest(token, phoneNumber) {
+    let data = JSON.stringify({
+        "Phone": phoneNumber
+    });
+
+    const proxyAgent = new HttpsProxyAgent({
+        host: 'premium-residential.geonode.com',
+        port: 9004,
+        auth: `${process.env.PROXY_USERNAME}:${process.env.PROXY_PASSWORD}`
+    });
+
+    let config = {
+        method: 'post',
+        maxBodyLength: Infinity,
+        url: 'https://public-api.lnnte-dncl.gc.ca/v1/Consumer/Check',
+       // httpsAgent: proxyAgent,
+        headers: { 
+            'accept': 'application/json, text/plain, */*', 
+            'accept-language': 'en', 
+            'authorization-captcha': token,
+            'content-type': 'application/json;charset=UTF-8', 
+            'origin': 'https://lnnte-dncl.gc.ca', 
+            'priority': 'u=1, i', 
+            'referer': 'https://lnnte-dncl.gc.ca/', 
+            'sec-fetch-dest': 'empty', 
+            'sec-fetch-mode': 'cors', 
+            'sec-fetch-site': 'same-site', 
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        },
+        data: data
+    };
+
+    try {
+        const response = await axios.request(config);
+        console.log(`API Response for ${phoneNumber}:`, JSON.stringify(response.data));
+    } catch (error) {
+        console.error(`API Request Error for ${phoneNumber}:`, error.response?.data || error.message);
+        throw error;
+    }
+}
+
+
 async function processAudio(audioUrl) {
     try {
         let audioData;
         
-        // Download audio file
-        console.log('Downloading audio from:', audioUrl);
-        const audioResponse = await axios.get(audioUrl, {
-            responseType: 'arraybuffer',
-            validateStatus: false,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-            }
-        });
+        // Try downloading audio file first
+        try {
+            console.log('Downloading audio from:', audioUrl);
+            const audioResponse = await axios.get(audioUrl, {
+                responseType: 'arraybuffer',
+                validateStatus: false,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+                }
+            });
 
-        if (audioResponse.status !== 200) {
-            throw new Error(`Failed to download audio: ${audioResponse.status} ${audioResponse.statusText}`);
+            if (audioResponse.status !== 200) {
+                throw new Error(`Failed to download audio: ${audioResponse.status} ${audioResponse.statusText}`);
+            }
+
+            audioData = audioResponse.data;
+        } catch (error) {
+            console.log('Failed to download audio, using backup file:', error.message);
+            audioData = fs.readFileSync(path.join(__dirname, 'audio_1732259037583.mp3'));
         }
 
-        audioData = audioResponse.data;
         console.log('Audio size:', audioData.length, 'bytes');
 
         console.log('Sending to wit.ai...');
@@ -612,6 +735,8 @@ async function processAudio(audioUrl) {
         return null;
     }
 }
+
+//processAudio('https://www.google.com/recaptcha/api2/payload?p=06AFcWeA5ie-uJdOzvwINDxHgBTvhaXGOzIlE1iWVwaguGbuN76ubHEVEMOxGoOMDJJz8uptkgGKjAXPjTCBUjYoXlQDrwi7zp0cegP904JIqSki5p6Ke12HTPpPMplXzV_bg4J43rJWuzUcFCjtEhKEnLfJYHr_3Rn3X4nhhrJ4YKwe4wju97e8gzLsXQ-xIA4inzhsCD9y-L&k=6LdnlkAUAAAAAL2zK68LwI1rDeclqZFiYr9jTSOX')
 
 
 scrapeWebsite(); 
