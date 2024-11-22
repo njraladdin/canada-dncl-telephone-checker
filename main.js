@@ -220,7 +220,7 @@ async function scrapeWebsite() {
 async function launchBrowser() {
     const randomProfile = Math.floor(Math.random() * 6) + 1; // Random number between 1-5
     return await puppeteerExtra.launch({
-        headless: "new",
+        headless: true,
         executablePath: executablePath,
         userDataDir: './chrome-data3',//getDefaultChromeUserDataDir(),// 
         args: [
