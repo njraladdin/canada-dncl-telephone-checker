@@ -16,8 +16,10 @@ const osPlatform = os.platform();
                 
 const executablePath = osPlatform.startsWith('win')  ? "C://Program Files//Google//Chrome//Application//chrome.exe" : "/usr/bin/google-chrome";
 
-const ALLOW_PROXY = false;
+const CONCURRENT_BROWSERS = 3;
+const BATCH_SIZE = 3;
 const PHONE_NUMBER = '514-519-5990';
+const ALLOW_PROXY = false;
 
 // Move results object declaration to the top level, before any function declarations
 const results = {
@@ -53,8 +55,7 @@ function getDefaultChromeUserDataDir() {
 
 async function extractCapchaTokens(totalAttempts = 30, tokenManager) {
     try {
-        const batchSize = 3;
-        const totalBatches = Math.ceil(totalAttempts / batchSize);
+        const totalBatches = Math.ceil(totalAttempts / BATCH_SIZE);
         let globalAttemptCount = 0;
         let completedAttemptCount = 0;
 
@@ -63,23 +64,24 @@ async function extractCapchaTokens(totalAttempts = 30, tokenManager) {
         for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
             console.log(`\n=== Starting Batch ${batchNum + 1}/${totalBatches} ===`);
             
-            // Launch two browsers concurrently
-            const [browser1, browser2] = await Promise.all([
-                launchBrowser('./chrome-data/chrome-data1'),
-                launchBrowser('./chrome-data/chrome-data2')
-            ]);
-            console.log('Launched two browsers for batch');
+            // Launch browsers concurrently
+            const browsers = await Promise.all(
+                Array.from({ length: CONCURRENT_BROWSERS }, (_, i) => 
+                    launchBrowser(`./chrome-data/chrome-data-${i + 1}`)
+                )
+            );
+            console.log(`Launched ${CONCURRENT_BROWSERS} browsers for batch`);
 
-            const batchAttempts = Math.min(batchSize, totalAttempts - globalAttemptCount);
+            const batchAttempts = Math.min(BATCH_SIZE, totalAttempts - globalAttemptCount);
             
             try {
                 const completedAttempts = new Map();
                 
                 console.log(`Opening ${batchAttempts} pages simultaneously...`);
-                // Distribute pages evenly between browsers
+                // Distribute pages across all browsers
                 const pagePromises = Array(batchAttempts).fill(0).map(async (_, index) => {
-                    // Alternate between browsers for each page
-                    const browser = index % 2 === 0 ? browser1 : browser2;
+                    // Distribute pages across all browsers
+                    const browser = browsers[index % CONCURRENT_BROWSERS];
                     const page = await browser.newPage();
                     
                     try {
@@ -156,13 +158,10 @@ async function extractCapchaTokens(totalAttempts = 30, tokenManager) {
                 globalAttemptCount += batchAttempts;
 
             } finally {
-                // Close both browsers at end of batch
+                // Close all browsers at end of batch
                 try {
-                    await Promise.all([
-                        browser1.close().catch(() => {}),
-                        browser2.close().catch(() => {})
-                    ]);
-                    console.log('Successfully closed both browsers for batch');
+                    await Promise.all(browsers.map(browser => browser.close().catch(() => {})));
+                    console.log(`Successfully closed all ${CONCURRENT_BROWSERS} browsers for batch`);
                 } catch (e) {
                     console.log('Error closing browsers:', e.message);
                 }
