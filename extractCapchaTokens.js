@@ -6,6 +6,7 @@ const axios = require('axios');
 const dotenv = require('dotenv');
 const EventEmitter = require('events');
 const fs = require('fs');
+const clc = require('cli-color');
 
 dotenv.config();
 const undici = require('undici');
@@ -15,7 +16,7 @@ const osPlatform = os.platform();
                 
 const executablePath = osPlatform.startsWith('win')  ? "C://Program Files//Google//Chrome//Application//chrome.exe" : "/usr/bin/google-chrome";
 
-const ALLOW_PROXY = true;
+const ALLOW_PROXY = false;
 const PHONE_NUMBER = '514-519-5990';
 
 // Move results object declaration to the top level, before any function declarations
@@ -52,8 +53,7 @@ function getDefaultChromeUserDataDir() {
 
 async function extractCapchaTokens(totalAttempts = 30, tokenManager) {
     try {
-
-        const batchSize = 12;
+        const batchSize = 3;
         const totalBatches = Math.ceil(totalAttempts / batchSize);
         let globalAttemptCount = 0;
         let completedAttemptCount = 0;
@@ -63,21 +63,40 @@ async function extractCapchaTokens(totalAttempts = 30, tokenManager) {
         for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
             console.log(`\n=== Starting Batch ${batchNum + 1}/${totalBatches} ===`);
             
-            let browser = await launchBrowser();
-            console.log('Launched new browser for batch');
+            // Launch two browsers concurrently
+            const [browser1, browser2] = await Promise.all([
+                launchBrowser('./chrome-data/chrome-data1'),
+                launchBrowser('./chrome-data/chrome-data2')
+            ]);
+            console.log('Launched two browsers for batch');
 
             const batchAttempts = Math.min(batchSize, totalAttempts - globalAttemptCount);
             
             try {
-                // Create a Map to track completed attempts in this batch
                 const completedAttempts = new Map();
                 
                 console.log(`Opening ${batchAttempts} pages simultaneously...`);
+                // Distribute pages evenly between browsers
                 const pagePromises = Array(batchAttempts).fill(0).map(async (_, index) => {
+                    // Alternate between browsers for each page
+                    const browser = index % 2 === 0 ? browser1 : browser2;
                     const page = await browser.newPage();
                     
                     try {
-                        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+                        await page.evaluateOnNewDocument(() => {
+                            Object.defineProperty(navigator, 'webdriver', ()=>{});
+                            delete navigator.__proto__.webdriver;
+                          });
+                        const userAgents = [
+                            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0',
+                            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15',
+                            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/122.0.2365.92'
+                        ];
+                        const randomUserAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
+                        await page.setUserAgent(randomUserAgent);
                         if (ALLOW_PROXY) {
                             await page.authenticate({
                                 username: process.env.PROXY_USERNAME,
@@ -117,8 +136,8 @@ async function extractCapchaTokens(totalAttempts = 30, tokenManager) {
                         console.log('========================\n');
 
                     } catch (error) {
+                        console.error(clc.red(`Error in tab ${index + 1}:`), clc.red(error));
                         completedAttemptCount++;
-                        console.error(`Error in tab ${index + 1}:`, error);
                         results.failed.push(new Date().toISOString());
 
                     } finally {
@@ -134,19 +153,20 @@ async function extractCapchaTokens(totalAttempts = 30, tokenManager) {
                 await Promise.all(pagePromises);
                 console.log(`Successfully processed ${batchAttempts} pages in parallel`);
 
-                // Update global attempt count after batch complete
                 globalAttemptCount += batchAttempts;
 
             } finally {
-                // Close browser at end of batch
+                // Close both browsers at end of batch
                 try {
-                    await browser.close().catch(() => {});
-                    console.log('Successfully closed browser for batch');
+                    await Promise.all([
+                        browser1.close().catch(() => {}),
+                        browser2.close().catch(() => {})
+                    ]);
+                    console.log('Successfully closed both browsers for batch');
                 } catch (e) {
-                    console.log('Error closing browser:', e.message);
+                    console.log('Error closing browsers:', e.message);
                 }
                 
-                // Add small delay between batches
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
         }
@@ -163,19 +183,19 @@ async function extractCapchaTokens(totalAttempts = 30, tokenManager) {
         console.log('===================\n');
 
     } catch (error) {
-        console.error('Fatal error:', error);
+        console.error(clc.red(`Fatal error:`), clc.red(error));
     }
 }
 
-// Helper function to launch browser with existing configuration
-async function launchBrowser() {
+// Update launchBrowser to accept userDataDir parameter
+async function launchBrowser(userDataDir) {
     const proxyUrl = `${process.env.PROXY_HOST}:${9000 + Math.floor(Math.random() * 10)}`;
 
     const randomProfile = Math.floor(Math.random() * 10) + 1;
     const browser = await puppeteerExtra.launch({
-        headless: true,
+        headless:true,
         executablePath: executablePath,
-        userDataDir: './chrome-data5', //getDefaultChromeUserDataDir(),// 
+        userDataDir: userDataDir, // Use the provided userDataDir
         args: [
             '--no-sandbox',
             '--disable-gpu',
@@ -188,6 +208,11 @@ async function launchBrowser() {
             '--password-store=basic',
             '--disable-blink-features=AutomationControlled',
             '--disable-features=IsolateOrigins,site-per-process',
+
+            '--lang=ja',
+            '--disable-web-security',
+            '--flag-switches-begin --disable-site-isolation-trials --flag-switches-end',
+
             `--profile-directory=Profile ${randomProfile}`,
             ALLOW_PROXY ? `--proxy-server=${proxyUrl}` : ''
         ].filter(Boolean),
@@ -284,7 +309,7 @@ async function solveCaptchaChallenge(page) {
         });
         
         if (!audioButton) {
-            console.log('Audio button not found');
+            console.log(clc.red('Audio button not found'));
             return;
         }
 
@@ -297,7 +322,7 @@ async function solveCaptchaChallenge(page) {
             if (blockingMessage) {
                 const text = await bframe.$eval('.rc-doscaptcha-header-text', el => el.textContent);
                 if (text.includes('Try again later')) {
-                    console.log('Detected "Try again later" message after clicking audio button. Moving on...');
+                    console.log(clc.red('Detected "Try again later" message after clicking audio button. Moving on...'));
                     return null;
                 }
             }
@@ -312,7 +337,7 @@ async function solveCaptchaChallenge(page) {
                 if (blockingMessage) {
                     const text = await bframe.$eval('.rc-doscaptcha-header-text', el => el.textContent);
                     if (text.includes('Try again later')) {
-                        console.log('Detected "Try again later" message during audio challenge. Moving on...');
+                        console.log(clc.red('Detected "Try again later" message during audio challenge. Moving on...'));
                         return null;
                     }
                 }
@@ -329,7 +354,7 @@ async function solveCaptchaChallenge(page) {
 
                 const transcription = await downloadAndTranscribeAudio(audioUrl);
                 if (!transcription) {
-                    console.log('Failed to get transcription, retrying...');
+                    console.log(clc.red('Failed to get transcription, retrying...'));
                     const reloadButton = await bframe.$('#recaptcha-reload-button');
                     await reloadButton.click({ delay: rdn(30, 150) });
                     continue;
@@ -372,11 +397,11 @@ async function solveCaptchaChallenge(page) {
                     return token;
                 }
 
-                console.log('No token received, retrying...');
+                console.log(clc.red('No token received, retrying...'));
                 continue;
 
             } catch (error) {
-                console.error('Error in audio challenge loop:', error);
+                console.error(clc.red(`Error in audio challenge loop:`), clc.red(error));
                 // Clean up alert handler before continuing
                 page.removeListener('dialog', alertHandler);
                 await new Promise(resolve => setTimeout(resolve, 1000));
@@ -384,7 +409,7 @@ async function solveCaptchaChallenge(page) {
             }
         }
     } catch (error) {
-        console.error('Fatal error in solveCaptcha:', error);
+        console.error(clc.red(`Fatal error in solveCaptcha:`), clc.red(error));
         return null;
     }
 }
@@ -564,11 +589,11 @@ async function attemptCaptcha(page, phoneNumber) {
             await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
-        console.log(`Failed to get token for ${phoneNumber}`);
+        console.log(clc.red(`Failed to get token for ${phoneNumber}`));
         return null;
 
     } catch (error) {
-        console.error(`Error processing ${phoneNumber}:`, error);
+        console.error(clc.red(`Error processing ${phoneNumber}:`), clc.red(error));
         return null;
     }
 }
@@ -588,31 +613,52 @@ async function downloadAndTranscribeAudio(audioUrl) {
         });
 
         if (audioResponse.status !== 200) {
-            throw new Error(`Failed to download audio: ${audioResponse.status} ${audioResponse.statusText}`);
+            console.log(clc.red(`Failed to download audio: ${audioResponse.status} ${audioResponse.statusText}`));
+            return null;
         }
 
         audioData = audioResponse.data;
         console.log('Audio size:', audioData.length, 'bytes');
 
+        // Randomly choose between environment tokens
+        const witTokens = [
+            process.env.WIT_TOKEN,
+            process.env.WIT_TOKEN_1,
+            process.env.WIT_TOKEN_2
+        ].filter(Boolean); // Filter out any undefined tokens
+        
+        const witToken = witTokens[Math.floor(Math.random() * witTokens.length)];
+
         console.log('Sending to wit.ai...');
-        const { body } = await undici.request('https://api.wit.ai/speech?v=20220622', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${process.env.WIT_TOKEN}`,
-                'Content-Type': 'audio/mpeg3'
-            },
-            body: audioData
-        });
+        let witResponse;
+        try {
+            witResponse = await undici.request('https://api.wit.ai/speech?v=20220622', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${witToken}`,
+                    'Content-Type': 'audio/mpeg3'
+                },
+                body: audioData
+            });
+        } catch (witError) {
+            console.error('Error making wit.ai request:', witError.message);
+            return null;
+        }
 
         let fullResponse = '';
-        for await (const chunk of body) {
-            fullResponse += chunk.toString();
+        try {
+            for await (const chunk of witResponse.body) {
+                fullResponse += chunk.toString();
+            }
+        } catch (streamError) {
+            console.error('Error reading wit.ai response stream:', streamError.message);
+            return null;
         }
         
         // Extract the last text value using regex
         const lastTextMatch = fullResponse.match(/"text":\s*"([^"]+)"/g);
         if (!lastTextMatch) {
-            console.error('NO TRANSCRIPTION MATCHES FOUND');
+            console.error(clc.red('NO TRANSCRIPTION MATCHES FOUND'));
             
             // Save debug info only on failure
             const tempDir = path.join(__dirname, 'temp');
@@ -634,7 +680,7 @@ async function downloadAndTranscribeAudio(audioUrl) {
         return audioTranscript;
 
     } catch (error) {
-        console.error('Error processing audio:', error.message);
+        console.error(clc.red(`Error processing audio:`), clc.red(error.message));
         return null;
     }
 }
