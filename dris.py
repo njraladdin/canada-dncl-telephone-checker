@@ -3,6 +3,7 @@ import time
 import random
 import requests
 import os
+import sys
 from urllib.parse import urlparse
 import json
 from dotenv import load_dotenv
@@ -18,6 +19,12 @@ NUM_BROWSERS = 10  # Number of browser instances to run
 TABS_PER_BROWSER = 3  # Number of concurrent tabs per browser
 TOTAL_ATTEMPTS = NUM_BROWSERS * TABS_PER_BROWSER
 HEADLESS = False  # Whether to run browsers in headless mode
+
+# Chrome executable paths for different platforms
+CHROME_PATHS = {
+    'win32': "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    'linux': "/usr/bin/google-chrome"
+}
 
 @dataclass
 class ResultState:
@@ -47,9 +54,30 @@ results = ResultState()
 # Load environment variables from .env file
 load_dotenv()
 
+def get_chrome_path():
+    """Get the appropriate Chrome executable path for the current platform"""
+    platform = sys.platform
+    chrome_path = CHROME_PATHS.get(platform)
+    
+    if not chrome_path:
+        raise RuntimeError(f"Unsupported platform: {platform}")
+    
+    if not os.path.exists(chrome_path):
+        raise RuntimeError(f"Chrome executable not found at: {chrome_path}")
+    
+    return chrome_path
+
 def get_chrome_options():
     """Create ChromiumOptions with random user data directory"""
     co = ChromiumOptions()
+    
+    # Set Chrome executable path
+    try:
+        chrome_path = get_chrome_path()
+        co.set_browser_path(chrome_path)
+        print(f"Using Chrome at: {chrome_path}")
+    except Exception as e:
+        print(f"Warning: Failed to set Chrome path: {str(e)}")
     
     # Set headless mode
     co.headless(HEADLESS)
