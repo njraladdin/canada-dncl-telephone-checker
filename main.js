@@ -80,7 +80,9 @@ async function processNextRequest() {
     db.get(`
         SELECT id, telephone 
         FROM engineers 
-        WHERE DNCL_status IS NULL 
+        WHERE (DNCL_status IS NULL 
+               OR DNCL_status = ''
+               OR DNCL_status = 'ERROR')
         AND telephone IS NOT NULL 
         AND phone_type = 'MOBILE'
         LIMIT 1
