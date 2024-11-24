@@ -7,7 +7,6 @@ function formatPhoneNumber(phone) {
     // Trim whitespace and take first 12 characters (###-###-####)
     return phone.trim().slice(0, 12);
 }
-
 async function sendDNCLRequest(phoneNumber, token, maxRetries = 3) {
     const formattedPhone = formatPhoneNumber(phoneNumber);
     
@@ -15,20 +14,23 @@ async function sendDNCLRequest(phoneNumber, token, maxRetries = 3) {
         "Phone": formattedPhone
     });
 
-
-
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        // Add delay before retries (skip delay on first attempt)
+        if (attempt > 1) {
+            await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+        }
+
         const proxyAgent = new HttpsProxyAgent({
-            host: process.env.PROXY_HOST,
-            port: process.env.PROXY_PORT,
-            auth: `${process.env.PROXY_USERNAME}:${process.env.PROXY_PASSWORD}`
+            host: 'p.webshare.io',
+            port: 80,
+            auth: `juuwqkin-rotate:tif49vweo33s`
         });
-    
         let config = {
             method: 'post',
             maxBodyLength: Infinity,
             url: 'https://public-api.lnnte-dncl.gc.ca/v1/Consumer/Check',
-            httpsAgent: proxyAgent,
+          //  httpsAgent: proxyAgent,
+            timeout: 60000,
             headers: { 
                 'accept': 'application/json, text/plain, */*', 
                 'accept-language': 'en', 
@@ -50,6 +52,7 @@ async function sendDNCLRequest(phoneNumber, token, maxRetries = 3) {
             console.log(`API Response for ${phoneNumber}:`, JSON.stringify(response.data));
             return response.data;
         } catch (error) {
+          //  console.log(error.message)
             // Handle 404 case immediately without retrying
             if (error.response?.status === 404) {
                 return {

@@ -3,6 +3,8 @@ const sendDNCLRequest = require('./sendDNCLRequest');
 const sqlite3 = require('sqlite3').verbose();
 const EventEmitter = require('events');
 const clc = require('cli-color');
+const dotenv = require('dotenv');
+dotenv.config();
 
 // Create token manager to handle communication between modules
 const tokenManager = new EventEmitter();
