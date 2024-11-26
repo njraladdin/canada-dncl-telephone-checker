@@ -201,6 +201,9 @@ class TokenEventManager:
                 print(f"{Fore.YELLOW}⚠️ No more numbers to check!{Style.RESET_ALL}")
                 return
                 
+            # Add a small delay between requests
+            await asyncio.sleep(1)  # 1 second delay between requests
+            
             # Send DNCL request
             phone = engineer['telephone']
             print(f"{Fore.CYAN}📞 Checking engineer {Fore.WHITE}{engineer['prenom']} {engineer['nom']} {Fore.YELLOW}({phone}){Style.RESET_ALL}")
@@ -306,8 +309,8 @@ async def main():
             
             # Create the token extractor with our event handler
             extractor = ExtractorClass(
-                tabs_per_browser=4,
-                headless=True,
+                tabs_per_browser=1,
+                headless=False,
                 on_token_found=event_manager.on_token_found
             )
             
