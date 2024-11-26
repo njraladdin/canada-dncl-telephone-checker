@@ -8,8 +8,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 def format_phone_number(phone: str) -> str:
-    """Trim whitespace and take first 12 characters (###-###-####)"""
-    return phone.strip()[:12]
+    """Trim whitespace, take first 12 characters (###-###-####), and remove dashes"""
+    return phone.strip()[:12].replace('-', '')
 
 async def send_dncl_request(phone_number: str, token: str, max_retries: int = 3) -> Dict[str, Any]:
     """
