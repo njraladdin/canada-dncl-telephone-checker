@@ -40,17 +40,21 @@ async def send_dncl_request(phone_number: str, token: str, max_retries: int = 3)
         }
 
         headers = {
-            'accept': 'application/json, text/plain, */*',
-            'accept-language': 'en',
-            'authorization-captcha': token,
-            'content-type': 'application/json;charset=UTF-8',
-            'origin': 'https://lnnte-dncl.gc.ca',
-            'priority': 'u=1, i',
-            'referer': 'https://lnnte-dncl.gc.ca/',
-            'sec-fetch-dest': 'empty',
-            'sec-fetch-mode': 'cors', 
-            'sec-fetch-site': 'same-site',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+             'accept': 'application/json, text/plain, */*',
+  'accept-language': 'en',
+  'authorization-captcha': token,
+  'content-type': 'application/json;charset=UTF-8',
+  'dnt': '1',
+  'origin': 'https://lnnte-dncl.gc.ca',
+  'priority': 'u=1, i',
+  'referer': 'https://lnnte-dncl.gc.ca/',
+  'sec-ch-ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"Windows"',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
         }
 
         try:
@@ -58,7 +62,7 @@ async def send_dncl_request(phone_number: str, token: str, max_retries: int = 3)
                 'https://public-api.lnnte-dncl.gc.ca/v1/Consumer/Check',
                 json=data,
                 headers=headers,
-                # proxies=proxy_config,  # Uncomment to enable proxy
+                proxies=proxy_config,  # Uncomment to enable proxy
                 timeout=60
             )
             response.raise_for_status()
