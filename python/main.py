@@ -13,6 +13,7 @@ from colorama import init, Fore, Style, Back
 import time
 import threading
 from progress_server import run_server
+from collections import deque
 
 # Load the .env file from parent directory
 load_dotenv('../.env')
@@ -138,6 +139,8 @@ class TokenEventManager:
         self.start_time = time.time()
         self.processed_count = 0
         self.total_initial_count = self.db.get_unprocessed_count()
+        # Replace set with deque with max length
+        self.used_tokens = deque(maxlen=1000)  # Only keep last 1000 tokens
         
         print(f"\n{Back.GREEN}{Fore.BLACK} STARTING DNCL PROCESSING {Style.RESET_ALL}")
         print(f"{Fore.CYAN}Numbers to process: {Fore.YELLOW}{self.total_initial_count}{Style.RESET_ALL}\n")
@@ -177,6 +180,14 @@ class TokenEventManager:
     
     async def on_token_found(self, token: str):
         """Called whenever a new token is found"""
+        # Skip if token was already used recently
+        if token in self.used_tokens:
+            print(f"{Fore.YELLOW}⚠️ Skipping already used token{Style.RESET_ALL}")
+            return
+            
+        # Add token to used tokens deque
+        self.used_tokens.append(token)
+        
         print(f"\n{Back.GREEN}{Fore.BLACK} NEW TOKEN RECEIVED {Style.RESET_ALL}")
         print(f"{Fore.CYAN}Token: {Fore.YELLOW}{token[:50]}...{Style.RESET_ALL}\n")
         
