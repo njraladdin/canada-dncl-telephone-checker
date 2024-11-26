@@ -56,7 +56,9 @@ async def send_dncl_request(phone_number: str, token: str, max_retries: int = 3)
   'sec-fetch-site': 'same-site',
   'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
         }
-
+        print('dncl request')
+        print(data)
+        print(headers)
         try:
             response = requests.post(
                 'https://public-api.lnnte-dncl.gc.ca/v1/Consumer/Check',
