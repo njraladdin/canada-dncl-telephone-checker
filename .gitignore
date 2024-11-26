@@ -1,7 +1,7 @@
 # Dependencies
-node_modules/
-package-lock.json
-yarn.lock
+javascript/node_modules/
+javascript/package-lock.json
+javascript/yarn.lock
 
 # Environment variables
 .env
@@ -29,20 +29,18 @@ coverage/
 *.swo
 .DS_Store
 
-# Project specific
-chrome-data/
-dist/
-build/
-temp/
-camoufox_data/
-chrome-data3/
-chrome-data2/
-chrome-data4/
-chrome-data5/
-chrome-data6/
+# JavaScript specific
+javascript/chrome-data/
+javascript/dist/
+javascript/build/
+javascript/temp/
 
-
+# Python specific
+python/__pycache__/
+python/temp/
+python/camoufox_data/
+python/captcha_screenshots/
+python/chrome-data/
 
 # Database files
 *.db
-

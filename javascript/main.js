@@ -4,20 +4,19 @@ const sqlite3 = require('sqlite3').verbose();
 const EventEmitter = require('events');
 const clc = require('cli-color');
 const dotenv = require('dotenv');
-dotenv.config();
+dotenv.config({ path: '../.env' });
 
 // Create token manager to handle communication between modules
 const tokenManager = new EventEmitter();
 let tokenQueue = [];
 
 // Initialize database
-const db = new sqlite3.Database('./engineers.db', (err) => {
+const db = new sqlite3.Database('../engineers.db', (err) => {
     if (err) {
         console.error('Error opening database:', err);
         return;
     }
 });
-
 // Add more robust event listener setup
 console.log('Setting up tokenExtracted event listener...');
 tokenManager.removeAllListeners('tokenExtracted'); // Clear any existing listeners
