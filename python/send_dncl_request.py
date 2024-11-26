@@ -7,6 +7,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+class TokenExpiredError(Exception):
+    """Custom exception to indicate when a token has expired/is invalid"""
+    pass
+
 def format_phone_number(phone: str) -> str:
     """Trim whitespace, take first 12 characters (###-###-####), and remove dashes"""
     return phone.strip()[:12].replace('-', '')
@@ -22,6 +26,9 @@ async def send_dncl_request(phone_number: str, token: str, max_retries: int = 3)
         
     Returns:
         Dict containing API response or error status
+        
+    Raises:
+        TokenExpiredError: When the token is expired/invalid and a new one is needed
     """
     formatted_phone = format_phone_number(phone_number)
     
@@ -67,9 +74,18 @@ async def send_dncl_request(phone_number: str, token: str, max_retries: int = 3)
                 proxies=proxy_config,  # Uncomment to enable proxy
                 timeout=60
             )
+            
+            # If we get a 400 error, the token is likely invalid/expired
+            if response.status_code == 400:
+                raise TokenExpiredError("Token expired or invalid")
+                
             response.raise_for_status()
             print(f"API Response for {phone_number}:", json.dumps(response.json()))
             return response.json()
+
+        except TokenExpiredError:
+            # Always raise TokenExpiredError to get a new token
+            raise
 
         except requests.exceptions.RequestException as error:
             # Handle 404 case immediately without retrying
