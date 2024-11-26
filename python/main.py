@@ -11,6 +11,8 @@ import sqlite3
 from datetime import datetime
 from colorama import init, Fore, Style, Back
 import time
+import threading
+from progress_server import run_server
 
 # Load the .env file from parent directory
 load_dotenv('../.env')
@@ -216,6 +218,12 @@ class TokenEventManager:
             self.db.update_engineer_dncl_status(engineer['id'], {'status': 'ERROR', 'error': str(e)})
             print(f"{Fore.RED}❌ {phone}: {str(e)}{Style.RESET_ALL}")
 
+def start_progress_server():
+    """Start the Flask progress server in a separate thread"""
+    server_thread = threading.Thread(target=run_server)
+    server_thread.daemon = True  # This ensures the thread will be killed when the main program exits
+    server_thread.start()
+
 async def main():
     # Initialize colorama
     init(autoreset=True)
@@ -255,6 +263,11 @@ async def main():
         print("Please check your .env file contains all required variables.")
         return
 
+    # Start the Flask progress server in a separate thread
+    start_progress_server()
+    await asyncio.sleep(200)  # Just a tiny delay to prevent system overload
+
+    return 
     while True:  # Main infinite loop
         try:
             # Create our event manager
@@ -272,7 +285,7 @@ async def main():
             
             # Create the token extractor with our event handler
             extractor = ExtractorClass(
-                tabs_per_browser=10,
+                tabs_per_browser=1,
                 headless=True,
                 on_token_found=event_manager.on_token_found
             )
