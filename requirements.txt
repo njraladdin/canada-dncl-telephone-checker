@@ -1,0 +1,8 @@
+DrissionPage
+python-dotenv
+requests
+2captcha-python
+google-generativeai
+colorama
+typing-extensions
+pathlib
