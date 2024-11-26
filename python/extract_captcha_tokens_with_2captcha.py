@@ -89,13 +89,13 @@ class CaptchaTokenExtractor:
         # Set headless mode
         co.headless(self.headless)
 
-        # Add proxy extension
-        proxy_extension_path = os.path.join(os.path.dirname(__file__), 'proxies_extension')
-        if os.path.exists(proxy_extension_path):
-            co.add_extension(proxy_extension_path)
-            print(f"Added proxy extension from: {proxy_extension_path}")
-        else:
-            print(f"Warning: Proxy extension not found at {proxy_extension_path}")
+        # # Add proxy extension
+        # proxy_extension_path = os.path.join(os.path.dirname(__file__), 'proxies_extension')
+        # if os.path.exists(proxy_extension_path):
+        #     co.add_extension(proxy_extension_path)
+        #     print(f"Added proxy extension from: {proxy_extension_path}")
+        # else:
+        #     print(f"Warning: Proxy extension not found at {proxy_extension_path}")
         
         # Create base chrome-data directory if it doesn't exist
         base_dir = pathlib.Path('chrome-data')

@@ -71,7 +71,7 @@ async def send_dncl_request(phone_number: str, token: str, max_retries: int = 3)
                 'https://public-api.lnnte-dncl.gc.ca/v1/Consumer/Check',
                 json=data,
                 headers=headers,
-                proxies=proxy_config,
+              #  proxies=proxy_config,
                 timeout=60
             )
             
