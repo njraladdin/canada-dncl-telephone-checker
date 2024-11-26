@@ -12,7 +12,7 @@ import threading
 from queue import Queue
 from dataclasses import dataclass, field
 from typing import List, Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 import asyncio
 from twocaptcha import TwoCaptcha
 
@@ -48,6 +48,7 @@ class CaptchaTokenExtractor:
         self.results = ResultState()
         self.on_token_found = on_token_found
         self.solver = TwoCaptcha(os.getenv('2CAPTCHA_API_KEY'))  # Initialize 2captcha solver with API key from .env
+        self.used_tokens = set()  # Track used tokens
         
         # Load environment variables
         load_dotenv()
@@ -244,6 +245,15 @@ class CaptchaTokenExtractor:
                 
                 if result and 'code' in result:
                     token = result['code']
+                    
+                    # Check if token was already used
+                    if token in self.used_tokens:
+                        print("Warning: Token was already used! Requesting new token...")
+                        return None
+                        
+                    # Add token to used set
+                    self.used_tokens.add(token)
+                    
                     print("Successfully received token from 2captcha!")
                     print(f"Token (first 50 chars): {token[:50]}...")
                     
@@ -263,17 +273,7 @@ class CaptchaTokenExtractor:
                         return token
                     else:
                         print("Failed to set token in page")
-                        # Debug: Try to find the textarea
-                        js_debug_textarea = """
-                            const elements = document.getElementsByName('g-recaptcha-response');
-                            return {
-                                count: elements.length,
-                                visible: elements.length > 0 ? !elements[0].hidden : false,
-                                value: elements.length > 0 ? elements[0].value : null
-                            };
-                        """
-                        textarea_info = tab.run_js(js_debug_textarea)
-                        print(f"Textarea debug info: {textarea_info}")
+                        self.used_tokens.remove(token)  # Remove from used set if failed to set
                         return None
                         
                 else:

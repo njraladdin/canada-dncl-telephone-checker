@@ -36,10 +36,14 @@ async def send_dncl_request(phone_number: str, token: str, max_retries: int = 3)
         "Phone": formatted_phone
     }
 
+    # Add logging for token usage
+    print(f"Using token (first 50 chars): {token[:50]}...")
+    print(f"Token length: {len(token)}")
+
     for attempt in range(1, max_retries + 1):
-        # Add delay before retries (skip delay on first attempt)
         if attempt > 1:
-            time.sleep(1)  # 1 second delay
+            print(f"Retry attempt {attempt}/{max_retries}")
+            time.sleep(1)  # 1 second delay between retries
 
         proxy_config = {
             'http': 'http://juuwqkin-rotate:tif49vweo33s@p.webshare.io:80',
@@ -75,10 +79,16 @@ async def send_dncl_request(phone_number: str, token: str, max_retries: int = 3)
                 timeout=60
             )
             
-            # If we get a 400 error, the token is likely invalid/expired
+            # Log response status and content
+            print(f"Response status: {response.status_code}")
+            print(f"Response content: {response.text[:200]}...")  # First 200 chars
+            
             if response.status_code == 400:
-                raise TokenExpiredError("Token expired or invalid")
-                
+                error_data = response.json()
+                if "ModelState" in error_data and "Authorization-Captcha" in error_data["ModelState"]:
+                    print("Token validation failed - raising TokenExpiredError")
+                    raise TokenExpiredError("Token expired or invalid")
+                    
             response.raise_for_status()
             print(f"API Response for {phone_number}:", json.dumps(response.json()))
             return response.json()
