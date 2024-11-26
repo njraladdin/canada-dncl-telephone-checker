@@ -304,8 +304,35 @@ class CaptchaTokenExtractor:
             print("Loading webpage...")
             tab.get('https://lnnte-dncl.gc.ca/en/Consumer/Check-your-registration/#!/')
             
-            # Wait for Angular to load
-            time.sleep(1)
+            # Wait for Angular to load and be ready
+            print("Waiting for Angular to initialize...")
+            js_wait_angular = """
+                return new Promise((resolve, reject) => {
+                    const maxWaitTime = 10000; // 10 seconds timeout
+                    const startTime = Date.now();
+                    
+                    const checkAngular = () => {
+                        if (window.angular && document.querySelector('[ng-show]')) {
+                            resolve(true);
+                            return;
+                        }
+                        
+                        if (Date.now() - startTime > maxWaitTime) {
+                            reject(new Error('Timeout waiting for Angular'));
+                            return;
+                        }
+                        
+                        setTimeout(checkAngular, 100);
+                    };
+                    checkAngular();
+                });
+            """
+            try:
+                tab.run_js_loaded(js_wait_angular, timeout=12)  # 12 seconds total timeout (including network delays)
+                print("Angular initialized successfully")
+            except Exception as e:
+                print(f"Failed to initialize Angular: {str(e)}")
+                raise
             
             # Execute JavaScript to manipulate Angular state
             print("Setting up phone number...")
