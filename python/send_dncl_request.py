@@ -4,6 +4,7 @@ import time
 from typing import Optional, Dict, Any
 import os
 from dotenv import load_dotenv
+import asyncio
 
 load_dotenv()
 
@@ -29,6 +30,9 @@ async def send_dncl_request(phone_number: str, token: str, max_retries: int = 3)
     print(f"Using token (first 50 chars): {token[:50]}...")
     print(f"Token length: {len(token)}")
 
+    # Add a small delay before using a new token
+    await asyncio.sleep(1.5)  # 1.5 second delay to allow token to be fully activated
+
     for attempt in range(1, max_retries + 1):
         if attempt > 1:
             print(f"Retry attempt {attempt}/{max_retries}")
@@ -39,27 +43,34 @@ async def send_dncl_request(phone_number: str, token: str, max_retries: int = 3)
             'https': 'http://juuwqkin-rotate:tif49vweo33s@p.webshare.io:80'
         }
 
+        headers = {
+            'accept': 'application/json, text/plain, */*',
+            'accept-language': 'en',
+            'authorization-captcha': token,
+            'content-type': 'application/json;charset=UTF-8',
+            'dnt': '1',
+            'origin': 'https://lnnte-dncl.gc.ca',
+            'priority': 'u=1, i',
+            'referer': 'https://lnnte-dncl.gc.ca/',
+            'sec-ch-ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-site',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+        }
+
+        print('dncl request')
+        print(f"Phone: {formatted_phone}")
+        print(f"Token: {token[:50]}...")
+        print(f"Headers: {headers}")
+
         try:
             response = requests.post(
                 'https://public-api.lnnte-dncl.gc.ca/v1/Consumer/Check',
                 json=data,
-                headers={
-                    'accept': 'application/json, text/plain, */*',
-                    'accept-language': 'en',
-                    'authorization-captcha': token,
-                    'content-type': 'application/json;charset=UTF-8',
-                    'dnt': '1',
-                    'origin': 'https://lnnte-dncl.gc.ca',
-                    'priority': 'u=1, i',
-                    'referer': 'https://lnnte-dncl.gc.ca/',
-                    'sec-ch-ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-                    'sec-ch-ua-mobile': '?0',
-                    'sec-ch-ua-platform': '"Windows"',
-                    'sec-fetch-dest': 'empty',
-                    'sec-fetch-mode': 'cors',
-                    'sec-fetch-site': 'same-site',
-                    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
-                },
+                headers=headers,
                 proxies=proxy_config,
                 timeout=60
             )
