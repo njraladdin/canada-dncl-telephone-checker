@@ -68,18 +68,8 @@ async def send_dncl_request(phone_number: str, token: str, max_retries: int = 3)
                 timeout=60
             )
             response.raise_for_status()
-            
-            # Check if response indicates invalid token
-            response_data = response.json()
-            if response.status_code == 401 or (isinstance(response_data, dict) and response_data.get('Message', '').lower().startswith('invalid token')):
-                return {
-                    'Phone': formatted_phone,
-                    'status': 'ERROR',
-                    'error': 'Invalid or expired token'
-                }
-                
-            print(f"API Response for {phone_number}:", json.dumps(response_data))
-            return response_data
+            print(f"API Response for {phone_number}:", json.dumps(response.json()))
+            return response.json()
 
         except requests.exceptions.RequestException as error:
             # Handle 404 case immediately without retrying
