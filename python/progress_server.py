@@ -15,10 +15,12 @@ HTML_TEMPLATE = '''
     <style>
         .table-container { margin: 20px; }
         .pagination-container { margin: 20px; }
-        .status-active { color: green; font-weight: bold; }
-        .status-inactive { color: red; }
-        .status-error { color: orange; }
-        .status-invalid { color: gray; }
+        .status-active { color: red !important; font-weight: bold; }
+        .status-inactive { color: green !important; font-weight: bold; }
+        .status-error { color: orange !important; }
+        .status-invalid { color: gray !important; }
+        .status-processing { color: blue !important; }
+        .status-pending { color: #666 !important; }
         .progress { height: 25px; }
     </style>
 </head>
@@ -60,8 +62,8 @@ HTML_TEMPLATE = '''
                 <tr>
                     <td>{{ row.prenom }} {{ row.nom }}</td>
                     <td>{{ row.telephone }}</td>
-                    <td class="status-{{ row.dncl_status.lower() if row.dncl_status else '' }}">
-                        {{ row.dncl_status if row.dncl_status else 'PENDING' }}
+                    <td class="status-{{ row.dncl_status }}">
+                        {{ row.dncl_status|upper if row.dncl_status else 'PENDING' }}
                     </td>
                     <td>{{ row.dncl_registration_date or '-' }}</td>
                     <td>{{ row.dncl_checked_at or '-' }}</td>
@@ -133,7 +135,13 @@ def index():
     # Get paginated results
     offset = (page - 1) * per_page
     cursor.execute('''
-        SELECT nom, prenom, telephone, dncl_status, dncl_registration_date, dncl_checked_at
+        SELECT 
+            nom, 
+            prenom, 
+            telephone, 
+            LOWER(dncl_status) as dncl_status, 
+            dncl_registration_date, 
+            dncl_checked_at
         FROM numbers 
         WHERE dncl_checked_at IS NOT NULL
         ORDER BY dncl_checked_at DESC
