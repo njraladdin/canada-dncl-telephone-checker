@@ -42,5 +42,5 @@ python/camoufox_data/
 python/captcha_screenshots/
 python/chrome-data/
 
-# Database files
-*.db
+# # Database files
+# *.db
