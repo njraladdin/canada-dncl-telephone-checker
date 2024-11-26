@@ -3,16 +3,16 @@ const fs = require('fs');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
 // Initialize database connection
-const db = new sqlite3.Database('./engineers.db', (err) => {
+const db = new sqlite3.Database('./numbers.db', (err) => {
     if (err) {
         console.error('Error opening database:', err);
         return;
     }
-    console.log('Connected to engineers database');
+    console.log('Connected to numbers database');
 });
 
 // First, get the table schema
-db.all(`PRAGMA table_info(engineers)`, (err, columns) => {
+db.all(`PRAGMA table_info(numbers)`, (err, columns) => {
     if (err) {
         console.error('Error getting table schema:', err);
         return;
@@ -25,7 +25,7 @@ db.all(`PRAGMA table_info(engineers)`, (err, columns) => {
     }));
 
     const csvWriter = createCsvWriter({
-        path: 'engineers_dncl.csv',
+        path: 'numbers_dncl.csv',
         header: header
     });
 
@@ -33,7 +33,7 @@ db.all(`PRAGMA table_info(engineers)`, (err, columns) => {
     const columnNames = columns.map(col => col.name).join(', ');
     db.all(`
         SELECT ${columnNames}
-        FROM engineers
+        FROM numbers
         WHERE DNCL_status IS NOT NULL
         AND DNCL_status != 'ERROR'
     `, (err, rows) => {

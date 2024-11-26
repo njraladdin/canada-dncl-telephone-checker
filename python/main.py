@@ -19,7 +19,7 @@ load_dotenv('../.env')
 BYPASSING_METHOD = '2captcha'  # can be 'audio', 'visual', or '2captcha'
 
 class DatabaseManager:
-    def __init__(self, db_path: str = "../engineers.db"):
+    def __init__(self, db_path: str = "../numbers.db"):
         # Use relative path to access database in parent directory
         self.db_path = db_path
         self.setup_database()
@@ -32,7 +32,7 @@ class DatabaseManager:
         # Add new columns if they don't exist
         try:
             cursor.execute("""
-                ALTER TABLE engineers 
+                ALTER TABLE numbers 
                 ADD COLUMN dncl_status TEXT
             """)
         except sqlite3.OperationalError:
@@ -40,7 +40,7 @@ class DatabaseManager:
             
         try:
             cursor.execute("""
-                ALTER TABLE engineers 
+                ALTER TABLE numbers 
                 ADD COLUMN dncl_registration_date TEXT
             """)
         except sqlite3.OperationalError:
@@ -48,7 +48,7 @@ class DatabaseManager:
             
         try:
             cursor.execute("""
-                ALTER TABLE engineers 
+                ALTER TABLE numbers 
                 ADD COLUMN dncl_checked_at TEXT
             """)
         except sqlite3.OperationalError:
@@ -64,11 +64,11 @@ class DatabaseManager:
         cursor = conn.cursor()
         
         cursor.execute("""
-            UPDATE engineers 
+            UPDATE numbers 
             SET dncl_status = 'PROCESSING'
             WHERE id = (
                 SELECT id 
-                FROM engineers 
+                FROM numbers 
                 WHERE (dncl_status IS NULL OR dncl_status = '')
                 AND telephone IS NOT NULL 
                 AND phone_type = 'MOBILE'
@@ -86,13 +86,13 @@ class DatabaseManager:
         return None
     
     def get_unprocessed_count(self) -> int:
-        """Get count of remaining unprocessed engineers"""
+        """Get count of remaining unprocessed numbers"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
         cursor.execute("""
             SELECT COUNT(*) as count 
-            FROM engineers 
+            FROM numbers 
             WHERE (dncl_status IS NULL OR dncl_status = '')
             AND telephone IS NOT NULL 
             AND phone_type = 'MOBILE'
@@ -120,7 +120,7 @@ class DatabaseManager:
         current_time = datetime.now().isoformat()
         
         cursor.execute("""
-            UPDATE engineers 
+            UPDATE numbers 
             SET dncl_status = ?,
                 dncl_registration_date = ?,
                 dncl_checked_at = ?
@@ -181,7 +181,7 @@ class TokenEventManager:
         # Get next engineer to check
         engineer = self.db.get_next_engineer()
         if not engineer:
-            print(f"{Fore.YELLOW}⚠️ No more engineers to check!{Style.RESET_ALL}")
+            print(f"{Fore.YELLOW}⚠️ No more numbers to check!{Style.RESET_ALL}")
             return
             
         # Send DNCL request
@@ -228,21 +228,21 @@ async def main():
         return
 
     # Validate database file exists and is accessible
-    db_path = Path("../engineers.db")
+    db_path = Path("../numbers.db")
     if not db_path.exists():
         print(f"{Back.RED}{Fore.WHITE} Error: Database file not found at {db_path.absolute()} {Style.RESET_ALL}")
-        print("Please make sure the engineers.db file exists in the parent directory.")
+        print("Please make sure the numbers.db file exists in the parent directory.")
         return
 
     # Test database connection
     try:
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM engineers")
+        cursor.execute("SELECT COUNT(*) FROM numbers")
         engineer_count = cursor.fetchone()[0]
         conn.close()
         print(f"{Back.GREEN}{Fore.BLACK} Database connection successful {Style.RESET_ALL}")
-        print(f"{Fore.CYAN}Total engineers in database: {Fore.YELLOW}{engineer_count}{Style.RESET_ALL}\n")
+        print(f"{Fore.CYAN}Total numbers in database: {Fore.YELLOW}{engineer_count}{Style.RESET_ALL}\n")
     except sqlite3.Error as e:
         print(f"{Back.RED}{Fore.WHITE} Database connection error: {str(e)} {Style.RESET_ALL}")
         return

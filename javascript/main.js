@@ -11,7 +11,7 @@ const tokenManager = new EventEmitter();
 let tokenQueue = [];
 
 // Initialize database
-const db = new sqlite3.Database('../engineers.db', (err) => {
+const db = new sqlite3.Database('../numbers.db', (err) => {
     if (err) {
         console.error('Error opening database:', err);
         return;
@@ -45,7 +45,7 @@ async function getUnprocessedCount() {
     return new Promise((resolve, reject) => {
         db.get(`
             SELECT COUNT(*) as count 
-            FROM engineers 
+            FROM numbers 
             WHERE DNCL_status IS NULL 
             AND telephone IS NOT NULL
             AND phone_type = 'MOBILE'
@@ -78,7 +78,7 @@ async function processNextRequest() {
     // Get next phone number from database that needs processing
     db.get(`
         SELECT id, telephone 
-        FROM engineers 
+        FROM numbers 
         WHERE (DNCL_status IS NULL 
                OR DNCL_status = ''
                OR DNCL_status = 'ERROR')
@@ -104,14 +104,14 @@ async function processNextRequest() {
             
             if (result.status === 'INVALID') {
                 db.run(`
-                    UPDATE engineers 
+                    UPDATE numbers 
                     SET DNCL_status = 'INVALID'
                     WHERE id = ?
                 `, [row.id]);
                 console.log(`Marked ${row.telephone} as INVALID due to invalid area code`);
             } else if (result.status === 'ERROR') {
                 db.run(`
-                    UPDATE engineers 
+                    UPDATE numbers 
                     SET DNCL_status = 'ERROR'
                     WHERE id = ?
                 `, [row.id]);
@@ -119,7 +119,7 @@ async function processNextRequest() {
             } else {
                 // Handle normal successful response
                 db.run(`
-                    UPDATE engineers 
+                    UPDATE numbers 
                     SET DNCL_status = ?, 
                         DNCL_registration_date = ? 
                     WHERE id = ?
