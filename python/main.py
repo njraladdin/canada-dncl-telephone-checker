@@ -272,7 +272,7 @@ async def main():
             
             # Create the token extractor with our event handler
             extractor = ExtractorClass(
-                tabs_per_browser=1,
+                tabs_per_browser=10,
                 headless=True,
                 on_token_found=event_manager.on_token_found
             )
