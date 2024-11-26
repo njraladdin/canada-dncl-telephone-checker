@@ -125,6 +125,18 @@ class CaptchaTokenExtractor:
             f'--profile-directory=Profile {profile_num}'
         ]
         
+        # Add these options for better headless operation
+        chrome_flags.extend([
+            '--disable-blink-features=AutomationControlled',
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--disable-site-isolation-trials',
+            '--disable-features=BlockInsecurePrivateNetworkRequests',
+            '--disable-web-security',
+            '--disable-features=CrossSiteDocumentBlockingIfIsolating',
+            '--disable-features=CrossSiteDocumentBlockingAlways',
+            '--disable-features=CrossSiteDocumentBlockingOnIsolatedOrigins'
+        ])
+        
         for flag in chrome_flags:
             co.set_argument(flag)
         
@@ -431,66 +443,61 @@ class CaptchaTokenExtractor:
                 if token:
                     print("Successfully got token from 2captcha")
                     
-                    # More comprehensive JavaScript to handle the reCAPTCHA
+                    # More robust JavaScript to handle the reCAPTCHA and button click
                     js_solve_captcha = f"""
-                        // First set the response in textarea
-                        const textarea = document.querySelector('[name="g-recaptcha-response"]');
-                        if (textarea) {{
-                            textarea.style.display = 'block'; // Make it visible for debugging
-                            textarea.value = '{token}';
-                        }}
+                        return new Promise((resolve) => {{
+                            // Function to set token and trigger callbacks
+                            const setTokenAndTrigger = () => {{
+                                try {{
+                                    // Set token in all possible g-recaptcha-response elements
+                                    document.querySelectorAll('[name="g-recaptcha-response"]').forEach(textarea => {{
+                                        textarea.style.display = 'block';
+                                        textarea.value = '{token}';
+                                    }});
 
-                        // Set response in iframe textarea if it exists
-                        const iframes = document.getElementsByTagName('iframe');
-                        for (const iframe of iframes) {{
-                            try {{
-                                const iframeDocument = iframe.contentWindow.document;
-                                const iframeTextarea = iframeDocument.querySelector('[name="g-recaptcha-response"]');
-                                if (iframeTextarea) {{
-                                    iframeTextarea.value = '{token}';
-                                }}
-                            }} catch (e) {{
-                                // Cross-origin access might fail
-                                console.log('Could not access iframe:', e);
-                            }}
-                        }}
-
-                        // Trigger the grecaptcha callback
-                        try {{
-                            if (window.___grecaptcha_cfg) {{
-                                const clientIds = Object.keys(window.___grecaptcha_cfg.clients);
-                                
-                                for (const clientId of clientIds) {{
-                                    const client = window.___grecaptcha_cfg.clients[clientId];
+                                    // Set token in window object
+                                    window.captchaToken = '{token}';
                                     
-                                    // Find callback in client object
-                                    for (const key in client) {{
-                                        if (client[key] && typeof client[key] === 'object') {{
-                                            const tokens = Object.keys(client[key]);
-                                            for (const token of tokens) {{
-                                                const obj = client[key][token];
-                                                if (obj && obj.callback) {{
-                                                    console.log('Found callback, executing...');
-                                                    obj.callback('{token}');
+                                    // Multiple methods to trigger verification
+                                    if (window.___grecaptcha_cfg) {{
+                                        const clientIds = Object.keys(window.___grecaptcha_cfg.clients);
+                                        for (const clientId of clientIds) {{
+                                            const client = window.___grecaptcha_cfg.clients[clientId];
+                                            for (const key in client) {{
+                                                const obj = client[key];
+                                                if (obj && typeof obj === 'object') {{
+                                                    if (obj.callback) {{
+                                                        obj.callback('{token}');
+                                                    }}
+                                                    if (obj.listeners && obj.listeners.length) {{
+                                                        obj.listeners.forEach(listener => {{
+                                                            listener('{token}');
+                                                        }});
+                                                    }}
                                                 }}
                                             }}
                                         }}
                                     }}
+
+                                    // Override getResponse methods
+                                    if (window.grecaptcha) {{
+                                        window.grecaptcha.getResponse = () => '{token}';
+                                        if (window.grecaptcha.enterprise) {{
+                                            window.grecaptcha.enterprise.getResponse = () => '{token}';
+                                        }}
+                                    }}
+
+                                    return true;
+                                }} catch (e) {{
+                                    console.error('Error in setTokenAndTrigger:', e);
+                                    return false;
                                 }}
-                            }}
-                        }} catch (e) {{
-                            console.error('Error triggering callback:', e);
-                        }}
+                            }};
 
-                        // Alternative method to trigger verification
-                        try {{
-                            window.grecaptcha.enterprise.getResponse = function() {{ return '{token}'; }};
-                            window.grecaptcha.getResponse = function() {{ return '{token}'; }};
-                        }} catch (e) {{
-                            console.log('Could not override getResponse:', e);
-                        }}
-
-                        return document.querySelector('[name="g-recaptcha-response"]').value === '{token}';
+                            // Set token and wait before resolving
+                            const success = setTokenAndTrigger();
+                            setTimeout(() => resolve(success), 2000);
+                        }});
                     """
                     
                     print("Injecting and triggering reCAPTCHA solution...")
@@ -500,113 +507,76 @@ class CaptchaTokenExtractor:
                     # Wait for the reCAPTCHA to be processed
                     time.sleep(3)
                     
-                    # Verify the token was properly set
-                    js_verify = """
-                        const result = {
-                            'textarea_found': false,
-                            'textarea_value': null,
-                            'checkbox_found': false,
-                            'checkbox_checked': false,
-                            'debug': {
-                                'iframes_count': 0,
-                                'recaptcha_elements': []
-                            }
-                        };
-                        
-                        // Check main textarea
-                        const textarea = document.querySelector('[name="g-recaptcha-response"]');
-                        if (textarea) {
-                            result.textarea_found = true;
-                            result.textarea_value = textarea.value;
-                        }
-                        
-                        // Check all iframes for recaptcha elements
-                        const iframes = document.getElementsByTagName('iframe');
-                        result.debug.iframes_count = iframes.length;
-                        
-                        for (const iframe of iframes) {
-                            try {
-                                result.debug.recaptcha_elements.push({
-                                    'src': iframe.src,
-                                    'id': iframe.id,
-                                    'name': iframe.name,
-                                    'class': iframe.className
-                                });
+                    # More robust button clicking logic
+                    js_click_button = """
+                        return new Promise((resolve) => {
+                            function findAndClickButton() {
+                                // Try multiple selectors
+                                const selectors = [
+                                    '#wb-auto-2 > form > div > div.submit-container > button:nth-child(2)',
+                                    'button[type="submit"]',
+                                    'button.btn-primary',
+                                    'input[type="submit"]'
+                                ];
                                 
-                                if (iframe.src && iframe.src.includes('recaptcha')) {
-                                    const checkbox = iframe.contentDocument.querySelector('.recaptcha-checkbox');
-                                    if (checkbox) {
-                                        result.checkbox_found = true;
-                                        result.checkbox_checked = checkbox.classList.contains('recaptcha-checkbox-checked');
+                                for (const selector of selectors) {
+                                    const button = document.querySelector(selector);
+                                    if (button) {
+                                        // Make sure button is visible and enabled
+                                        button.style.display = 'block';
+                                        button.disabled = false;
+                                        button.style.opacity = '1';
+                                        button.style.visibility = 'visible';
+                                        
+                                        // Try multiple click methods
+                                        try {
+                                            button.click();
+                                        } catch (e) {
+                                            try {
+                                                // Create and dispatch click event
+                                                const event = new MouseEvent('click', {
+                                                    bubbles: true,
+                                                    cancelable: true,
+                                                    view: window
+                                                });
+                                                button.dispatchEvent(event);
+                                            } catch (e2) {
+                                                console.error('Click dispatch failed:', e2);
+                                            }
+                                        }
+                                        return true;
                                     }
                                 }
-                            } catch (e) {
-                                console.log('Could not access iframe:', e);
+                                return false;
                             }
-                        }
-                        
-                        return result;
+                            
+                            // Try clicking multiple times with delays
+                            let attempts = 0;
+                            const maxAttempts = 3;
+                            
+                            function attemptClick() {
+                                if (attempts >= maxAttempts) {
+                                    resolve(false);
+                                    return;
+                                }
+                                
+                                if (findAndClickButton()) {
+                                    resolve(true);
+                                } else {
+                                    attempts++;
+                                    setTimeout(attemptClick, 1000);
+                                }
+                            }
+                            
+                            attemptClick();
+                        });
                     """
                     
-                    verify_result = tab.run_js(js_verify)
-                    print("Verification details:")
-                    print(f"- Textarea found: {verify_result.get('textarea_found')}")
-                    print(f"- Textarea value set: {'Yes' if verify_result.get('textarea_value') else 'No'}")
-                    print(f"- Checkbox found: {verify_result.get('checkbox_found')}")
-                    print(f"- Checkbox checked: {verify_result.get('checkbox_checked')}")
-                    print("\nDebug information:")
-                    print(f"- Number of iframes: {verify_result.get('debug', {}).get('iframes_count')}")
-                    print("- ReCAPTCHA elements found:")
-                    for elem in verify_result.get('debug', {}).get('recaptcha_elements', []):
-                        print(f"  * {elem}")
-                    
-                    # If the verification shows the token wasn't properly set, try an alternative method
-                    if not verify_result.get('checkbox_checked'):
-                        print("\nTrying alternative method to trigger reCAPTCHA...")
-                        js_alternative = f"""
-                            try {{
-                                // Try to find the reCAPTCHA iframe
-                                const recaptchaFrame = Array.from(document.getElementsByTagName('iframe'))
-                                    .find(iframe => iframe.src && iframe.src.includes('recaptcha'));
-                                    
-                                if (recaptchaFrame) {{
-                                    // Force the checkbox to be checked
-                                    const frameDoc = recaptchaFrame.contentDocument;
-                                    const checkbox = frameDoc.querySelector('.recaptcha-checkbox');
-                                    if (checkbox) {{
-                                        checkbox.classList.add('recaptcha-checkbox-checked');
-                                    }}
-                                    
-                                    // Attempt to trigger verification
-                                    window.___grecaptcha_cfg.clients[0].aa.callback('{token}');
-                                    return true;
-                                }}
-                                return false;
-                            }} catch (e) {{
-                                console.error('Alternative method failed:', e);
-                                return false;
-                            }}
-                        """
-                        alternative_result = tab.run_js(js_alternative)
-                        print(f"Alternative method result: {alternative_result}")
-                    
-                    # Click the submit button
                     print("Attempting to click the submit button...")
-                    js_click_button = """
-                        const button = document.querySelector('#wb-auto-2 > form > div > div.submit-container > button:nth-child(2)');
-                        if (button) {
-                            // Force enable the button if it's disabled
-                            button.disabled = false;
-                            button.click();
-                            return true;
-                        }
-                        return false;
-                    """
+                    click_result = tab.run_js(js_click_button)
                     
-                    if tab.run_js(js_click_button):
+                    if click_result:
                         print("Successfully clicked the submit button!")
-                        
-                        # Wait for response
                         time.sleep(5)
                         
                         # Get the specific element's text and check for success/error messages
@@ -628,7 +598,7 @@ class CaptchaTokenExtractor:
                             print(f"Form submission failed. Page text: {result.get('text')}")
                             print(f"\n{Fore.MAGENTA}Result message: {result.get('result_text')}{Style.RESET_ALL}\n")
                     else:
-                        print("Failed to find or click the submit button")
+                        print("Failed to click the submit button after multiple attempts")
                     
                     if self.on_token_found:
                         asyncio.run(self._handle_token_found(token))
