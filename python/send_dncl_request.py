@@ -34,6 +34,11 @@ async def send_dncl_request(phone_number: str, token: str, max_retries: int = 3)
             print(f"Retry attempt {attempt}/{max_retries}")
             time.sleep(1)  # 1 second delay between retries
 
+        proxy_config = {
+            'http': 'http://juuwqkin-rotate:tif49vweo33s@p.webshare.io:80',
+            'https': 'http://juuwqkin-rotate:tif49vweo33s@p.webshare.io:80'
+        }
+
         try:
             response = requests.post(
                 'https://public-api.lnnte-dncl.gc.ca/v1/Consumer/Check',
@@ -43,7 +48,17 @@ async def send_dncl_request(phone_number: str, token: str, max_retries: int = 3)
                     'accept-language': 'en',
                     'authorization-captcha': token,
                     'content-type': 'application/json;charset=UTF-8',
-                    # ... rest of headers ...
+                    'dnt': '1',
+                    'origin': 'https://lnnte-dncl.gc.ca',
+                    'priority': 'u=1, i',
+                    'referer': 'https://lnnte-dncl.gc.ca/',
+                    'sec-ch-ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"Windows"',
+                    'sec-fetch-dest': 'empty',
+                    'sec-fetch-mode': 'cors',
+                    'sec-fetch-site': 'same-site',
+                    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
                 },
                 proxies=proxy_config,
                 timeout=60
