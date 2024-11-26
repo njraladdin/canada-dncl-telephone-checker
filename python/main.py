@@ -265,9 +265,9 @@ async def main():
 
     # Start the Flask progress server in a separate thread
     start_progress_server()
-    await asyncio.sleep(200)  # Just a tiny delay to prevent system overload
+    # await asyncio.sleep(200)  # Just a tiny delay to prevent system overload
 
-    return 
+    # return 
     while True:  # Main infinite loop
         try:
             # Create our event manager
@@ -285,7 +285,7 @@ async def main():
             
             # Create the token extractor with our event handler
             extractor = ExtractorClass(
-                tabs_per_browser=1,
+                tabs_per_browser=16,
                 headless=True,
                 on_token_found=event_manager.on_token_found
             )
