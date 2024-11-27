@@ -15,7 +15,6 @@ from typing import List, Callable
 from datetime import datetime, timedelta
 import asyncio
 from twocaptcha import TwoCaptcha
-from colorama import Fore, Style
 
 # Configuration Constants
 CHROME_PATHS = {
@@ -124,18 +123,6 @@ class CaptchaTokenExtractor:
             '--flag-switches-end',
             f'--profile-directory=Profile {profile_num}'
         ]
-        
-        # Add these options for better headless operation
-        chrome_flags.extend([
-            '--disable-blink-features=AutomationControlled',
-            '--disable-features=IsolateOrigins,site-per-process',
-            '--disable-site-isolation-trials',
-            '--disable-features=BlockInsecurePrivateNetworkRequests',
-            '--disable-web-security',
-            '--disable-features=CrossSiteDocumentBlockingIfIsolating',
-            '--disable-features=CrossSiteDocumentBlockingAlways',
-            '--disable-features=CrossSiteDocumentBlockingOnIsolatedOrigins'
-        ])
         
         for flag in chrome_flags:
             co.set_argument(flag)
@@ -247,11 +234,31 @@ class CaptchaTokenExtractor:
             
             try:
                 print("Sending captcha to 2captcha for solving...")
+                
+                # Get the user agent from the browser
+                user_agent = tab.run_js("return navigator.userAgent")
+                
+                # Get any cookies that might be relevant
+                cookies = tab.run_js("""
+                    return document.cookie.split('; ')
+                        .map(c => c.split('='))
+                        .reduce((acc, [key, value]) => {
+                            acc[key] = value;
+                            return acc;
+                        }, {});
+                """)
+                
+                cookie_string = '; '.join([f"{k}={v}" for k, v in cookies.items()])
+                
                 result = self.solver.recaptcha(
                     sitekey=sitekey,
                     url=current_url,
                     invisible=False,
-                    enterprise=False
+                    enterprise=False,
+                    # Add additional parameters
+                    user_agent=user_agent,    # Pass browser's user agent
+                    cookies=cookie_string   # Pass relevant cookies
+                 
                 )
                 
                 print(f"2captcha raw response: {result}")
@@ -442,228 +449,6 @@ class CaptchaTokenExtractor:
                 
                 if token:
                     print("Successfully got token from 2captcha")
-                    
-                    # More robust JavaScript to handle the reCAPTCHA and button click
-                    js_solve_captcha = f"""
-                        return new Promise((resolve) => {{
-                            // Function to set token and trigger callbacks
-                            const setTokenAndTrigger = () => {{
-                                try {{
-                                    // Set token in all possible g-recaptcha-response elements
-                                    document.querySelectorAll('[name="g-recaptcha-response"]').forEach(textarea => {{
-                                        textarea.style.display = 'block';
-                                        textarea.value = '{token}';
-                                    }});
-
-                                    // Set token in window object
-                                    window.captchaToken = '{token}';
-                                    
-                                    // Multiple methods to trigger verification
-                                    if (window.___grecaptcha_cfg) {{
-                                        const clientIds = Object.keys(window.___grecaptcha_cfg.clients);
-                                        for (const clientId of clientIds) {{
-                                            const client = window.___grecaptcha_cfg.clients[clientId];
-                                            for (const key in client) {{
-                                                const obj = client[key];
-                                                if (obj && typeof obj === 'object') {{
-                                                    if (obj.callback) {{
-                                                        obj.callback('{token}');
-                                                    }}
-                                                    if (obj.listeners && obj.listeners.length) {{
-                                                        obj.listeners.forEach(listener => {{
-                                                            listener('{token}');
-                                                        }});
-                                                    }}
-                                                }}
-                                            }}
-                                        }}
-                                    }}
-
-                                    // Override getResponse methods
-                                    if (window.grecaptcha) {{
-                                        window.grecaptcha.getResponse = () => '{token}';
-                                        if (window.grecaptcha.enterprise) {{
-                                            window.grecaptcha.enterprise.getResponse = () => '{token}';
-                                        }}
-                                    }}
-
-                                    return true;
-                                }} catch (e) {{
-                                    console.error('Error in setTokenAndTrigger:', e);
-                                    return false;
-                                }}
-                            }};
-
-                            // Set token and wait before resolving
-                            const success = setTokenAndTrigger();
-                            setTimeout(() => resolve(success), 2000);
-                        }});
-                    """
-                    
-                    print("Injecting and triggering reCAPTCHA solution...")
-                    success = tab.run_js(js_solve_captcha)
-                    print(f"Token injection result: {success}")
-                    
-                    # Wait for the reCAPTCHA to be processed
-                    time.sleep(3)
-                    
-                    # More robust button clicking logic
-                    js_click_button = """
-                        return new Promise((resolve) => {
-                            function findAndClickButton() {
-                                // Try multiple selectors
-                                const selectors = [
-                                    '#wb-auto-2 > form > div > div.submit-container > button:nth-child(2)',
-                                    'button[type="submit"]',
-                                    'button.btn-primary',
-                                    'input[type="submit"]'
-                                ];
-                                
-                                for (const selector of selectors) {
-                                    const button = document.querySelector(selector);
-                                    if (button) {
-                                        // Make sure button is visible and enabled
-                                        button.style.display = 'block';
-                                        button.disabled = false;
-                                        button.style.opacity = '1';
-                                        button.style.visibility = 'visible';
-                                        
-                                        // Try multiple click methods
-                                        try {
-                                            button.click();
-                                        } catch (e) {
-                                            try {
-                                                // Create and dispatch click event
-                                                const event = new MouseEvent('click', {
-                                                    bubbles: true,
-                                                    cancelable: true,
-                                                    view: window
-                                                });
-                                                button.dispatchEvent(event);
-                                            } catch (e2) {
-                                                console.error('Click dispatch failed:', e2);
-                                            }
-                                        }
-                                        return true;
-                                    }
-                                }
-                                return false;
-                            }
-                            
-                            // Try clicking multiple times with delays
-                            let attempts = 0;
-                            const maxAttempts = 3;
-                            
-                            function attemptClick() {
-                                if (attempts >= maxAttempts) {
-                                    resolve(false);
-                                    return;
-                                }
-                                
-                                if (findAndClickButton()) {
-                                    resolve(true);
-                                } else {
-                                    attempts++;
-                                    setTimeout(attemptClick, 1000);
-                                }
-                            }
-                            
-                            attemptClick();
-                        });
-                    """
-                    
-                    print("Attempting to click the submit button...")
-                    click_result = tab.run_js(js_click_button)
-                    
-                    if click_result:
-                        print("Successfully clicked the submit button!")
-                        
-                        # Take screenshot before checking results
-                        print("Taking screenshot of current page...")
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        screenshot_path = f"debug_screenshots/after_captcha_{timestamp}.png"
-                        os.makedirs("debug_screenshots", exist_ok=True)
-                        tab.get_screenshot(screenshot_path)
-                        print(f"Screenshot saved to: {screenshot_path}")
-                        
-                        # Wait longer for the page to load and Angular to update
-                        print("Waiting for page transition...")
-                        time.sleep(10)  # Increased wait time
-                        
-                        # Take another screenshot after waiting
-                        screenshot_path = f"debug_screenshots/after_wait_{timestamp}.png"
-                        tab.get_screenshot(screenshot_path)
-                        print(f"Second screenshot saved to: {screenshot_path}")
-                        
-                        # Debug: Print all visible text on page
-                        js_debug = """
-                            return {
-                                'all_text': document.body.innerText,
-                                'html': document.documentElement.outerHTML,
-                                'url': window.location.href
-                            };
-                        """
-                        debug_info = tab.run_js(js_debug)
-                        print(f"\n{Fore.YELLOW}Current URL: {debug_info.get('url')}{Style.RESET_ALL}")
-                        print(f"{Fore.YELLOW}Page Text Preview: {debug_info.get('all_text')[:200]}...{Style.RESET_ALL}")
-                        
-                        # Try to find the element with more detailed error reporting
-                        js_check_result = """
-                            const result = {
-                                'success': false,
-                                'text': '',
-                                'result_text': '',
-                                'debug': {
-                                    'element_found': false,
-                                    'visible_elements': []
-                                }
-                            };
-                            
-                            // Check for the specific element
-                            const resultElement = document.querySelector('body > div:nth-child(5) > div > div > div.container.ng-scope > div > div:nth-child(2) > div:nth-child(1) > div:nth-child(3) > div:nth-child(4) > div.register-complete > div.rc-cont');
-                            
-                            if (resultElement) {
-                                result.debug.element_found = true;
-                                result.result_text = resultElement.innerText;
-                            }
-                            
-                            // Get all visible text elements for debugging
-                            document.querySelectorAll('div').forEach(el => {
-                                if (el.offsetWidth > 0 && el.offsetHeight > 0 && el.innerText.trim()) {
-                                    result.debug.visible_elements.push({
-                                        'text': el.innerText.substring(0, 100),
-                                        'class': el.className,
-                                        'id': el.id
-                                    });
-                                }
-                            });
-                            
-                            // Check for captcha message
-                            result.success = !document.body.innerText.includes('complete the reCAPTCHA');
-                            result.text = document.body.innerText.substring(0, 200);
-                            
-                            return result;
-                        """
-                        
-                        result = tab.run_js(js_check_result)
-                        
-                        print(f"\n{Fore.CYAN}Debug Information:{Style.RESET_ALL}")
-                        print(f"Element found: {result.get('debug', {}).get('element_found')}")
-                        print("\nVisible Elements:")
-                        for elem in result.get('debug', {}).get('visible_elements', [])[:5]:  # Show first 5 elements
-                            print(f"- Class: {elem.get('class')}")
-                            print(f"  Text: {elem.get('text')}")
-                            print("---")
-                        
-                        if result.get('success'):
-                            print("Form submission appears successful!")
-                            print(f"\n{Fore.MAGENTA}Result message: {result.get('result_text')}{Style.RESET_ALL}\n")
-                        else:
-                            print(f"Form submission failed. Page text: {result.get('text')}")
-                            print(f"\n{Fore.MAGENTA}Result message: {result.get('result_text')}{Style.RESET_ALL}\n")
-                    else:
-                        print("Failed to click the submit button after multiple attempts")
-                    
                     if self.on_token_found:
                         asyncio.run(self._handle_token_found(token))
                     results_queue.put((True, token))
@@ -672,15 +457,10 @@ class CaptchaTokenExtractor:
                     results_queue.put((False, None))
                     
             except Exception as e:
-                print(f"Tab processing error: {str(e)}")
-                import traceback
-                traceback.print_exc()
+                print(f"An error occurred: {str(e)}")
                 results_queue.put((False, None))
-            finally:
-                try:
-                    tab.close()
-                except:
-                    pass
+                return
+                
         except Exception as e:
             print(f"Tab processing error: {str(e)}")
             results_queue.put((False, None))
