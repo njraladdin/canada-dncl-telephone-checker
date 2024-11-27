@@ -577,20 +577,84 @@ class CaptchaTokenExtractor:
                     
                     if click_result:
                         print("Successfully clicked the submit button!")
-                        time.sleep(5)
                         
-                        # Get the specific element's text and check for success/error messages
-                        js_check_result = """
-                            const pageText = document.body.innerText;
-                            const resultElement = document.querySelector('body > div:nth-child(5) > div > div > div.container.ng-scope > div > div:nth-child(2) > div:nth-child(1) > div:nth-child(3) > div:nth-child(4) > div.register-complete > div.rc-cont');
+                        # Take screenshot before checking results
+                        print("Taking screenshot of current page...")
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        screenshot_path = f"debug_screenshots/after_captcha_{timestamp}.png"
+                        os.makedirs("debug_screenshots", exist_ok=True)
+                        tab.get_screenshot(screenshot_path)
+                        print(f"Screenshot saved to: {screenshot_path}")
+                        
+                        # Wait longer for the page to load and Angular to update
+                        print("Waiting for page transition...")
+                        time.sleep(10)  # Increased wait time
+                        
+                        # Take another screenshot after waiting
+                        screenshot_path = f"debug_screenshots/after_wait_{timestamp}.png"
+                        tab.get_screenshot(screenshot_path)
+                        print(f"Second screenshot saved to: {screenshot_path}")
+                        
+                        # Debug: Print all visible text on page
+                        js_debug = """
                             return {
-                                'success': !pageText.includes('complete the reCAPTCHA'),
-                                'text': pageText.substring(0, 200),  // First 200 chars for debugging
-                                'result_text': resultElement ? resultElement.innerText : 'Element not found'
+                                'all_text': document.body.innerText,
+                                'html': document.documentElement.outerHTML,
+                                'url': window.location.href
                             };
+                        """
+                        debug_info = tab.run_js(js_debug)
+                        print(f"\n{Fore.YELLOW}Current URL: {debug_info.get('url')}{Style.RESET_ALL}")
+                        print(f"{Fore.YELLOW}Page Text Preview: {debug_info.get('all_text')[:200]}...{Style.RESET_ALL}")
+                        
+                        # Try to find the element with more detailed error reporting
+                        js_check_result = """
+                            const result = {
+                                'success': false,
+                                'text': '',
+                                'result_text': '',
+                                'debug': {
+                                    'element_found': false,
+                                    'visible_elements': []
+                                }
+                            };
+                            
+                            // Check for the specific element
+                            const resultElement = document.querySelector('body > div:nth-child(5) > div > div > div.container.ng-scope > div > div:nth-child(2) > div:nth-child(1) > div:nth-child(3) > div:nth-child(4) > div.register-complete > div.rc-cont');
+                            
+                            if (resultElement) {
+                                result.debug.element_found = true;
+                                result.result_text = resultElement.innerText;
+                            }
+                            
+                            // Get all visible text elements for debugging
+                            document.querySelectorAll('div').forEach(el => {
+                                if (el.offsetWidth > 0 && el.offsetHeight > 0 && el.innerText.trim()) {
+                                    result.debug.visible_elements.push({
+                                        'text': el.innerText.substring(0, 100),
+                                        'class': el.className,
+                                        'id': el.id
+                                    });
+                                }
+                            });
+                            
+                            // Check for captcha message
+                            result.success = !document.body.innerText.includes('complete the reCAPTCHA');
+                            result.text = document.body.innerText.substring(0, 200);
+                            
+                            return result;
                         """
                         
                         result = tab.run_js(js_check_result)
+                        
+                        print(f"\n{Fore.CYAN}Debug Information:{Style.RESET_ALL}")
+                        print(f"Element found: {result.get('debug', {}).get('element_found')}")
+                        print("\nVisible Elements:")
+                        for elem in result.get('debug', {}).get('visible_elements', [])[:5]:  # Show first 5 elements
+                            print(f"- Class: {elem.get('class')}")
+                            print(f"  Text: {elem.get('text')}")
+                            print("---")
+                        
                         if result.get('success'):
                             print("Form submission appears successful!")
                             print(f"\n{Fore.MAGENTA}Result message: {result.get('result_text')}{Style.RESET_ALL}\n")
