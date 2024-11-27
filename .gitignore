@@ -44,3 +44,4 @@ python/chrome-data/
 
 # # Database files
 *.db
+numbers.db
