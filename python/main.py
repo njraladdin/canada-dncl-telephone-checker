@@ -307,22 +307,47 @@ async def main():
             else:
                 raise ValueError(f"Invalid BYPASSING_METHOD: {BYPASSING_METHOD}")
             
+            # Get list of phone numbers to process
+            db = DatabaseManager()
+            phone_numbers = []
+            
+            # Get up to 100 unprocessed numbers (adjust the limit as needed)
+            conn = sqlite3.connect(db.db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT telephone 
+                FROM numbers 
+                WHERE (dncl_status IS NULL OR dncl_status = '')
+                AND telephone IS NOT NULL 
+                AND phone_type = 'MOBILE'
+                LIMIT 100
+            """)
+            
+            phone_numbers = [row[0] for row in cursor.fetchall()]
+            conn.close()
+
+            if not phone_numbers:
+                print(f"{Fore.YELLOW}No phone numbers to process!{Style.RESET_ALL}")
+                return
+
+            print(f"{Fore.CYAN}Found {len(phone_numbers)} numbers to process{Style.RESET_ALL}")
+
             # Create the token extractor with our event handler
             extractor = ExtractorClass(
-                tabs_per_browser=6,
+                tabs_per_browser=2,
                 headless=False,
                 on_token_found=event_manager.on_token_found
             )
             
-            # Extract tokens
+            # Extract tokens with phone numbers
             print(f"\n{Back.BLUE}{Fore.WHITE} Starting new token extraction cycle {Style.RESET_ALL}")
-            tokens = extractor.extract_tokens()
+            tokens = extractor.extract_tokens(phone_numbers)
             
             print(f"\n{Back.GREEN}{Fore.BLACK} EXTRACTION CYCLE COMPLETE {Style.RESET_ALL}")
             print(f"{Fore.CYAN}Total tokens found in this cycle: {Fore.YELLOW}{len(tokens)}{Style.RESET_ALL}")
             
             # Minimal delay before starting next cycle
-            await asyncio.sleep(2)  # Just a tiny delay to prevent system overload
+            await asyncio.sleep(2)
             
         except Exception as e:
             print(f"\n{Back.RED}{Fore.WHITE} Error in main loop: {str(e)} {Style.RESET_ALL}")

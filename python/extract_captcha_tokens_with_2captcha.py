@@ -15,6 +15,7 @@ from typing import List, Callable
 from datetime import datetime, timedelta
 import asyncio
 from twocaptcha import TwoCaptcha
+from colorama import Fore, Style
 
 # Configuration Constants
 CHROME_PATHS = {
@@ -24,7 +25,7 @@ CHROME_PATHS = {
 
 @dataclass
 class ResultState:
-    successful: List[str] = field(default_factory=list)  # Store successful tokens
+    successful: List[dict] = field(default_factory=list)  # Store successful DNCL checks
     failed: List[datetime] = field(default_factory=list)  # Store failed attempt timestamps
     total_attempts: int = 0
     
@@ -37,7 +38,7 @@ class ResultState:
     def print_progress(self):
         print(f"\n=== PROGRESS UPDATE (Completed: {self.total_attempts}) ===")
         print(f"Success rate: {self.success_rate:.1f}%")
-        print(f"Total successful tokens: {len(self.successful)}")
+        print(f"Total successful checks: {len(self.successful)}")
         print(f"Failed attempts: {len(self.failed)}")
         print("=" * 50)
 
@@ -47,8 +48,9 @@ class CaptchaTokenExtractor:
         self.headless = headless
         self.results = ResultState()
         self.on_token_found = on_token_found
-        self.solver = TwoCaptcha(os.getenv('2CAPTCHA_API_KEY'))  # Initialize 2captcha solver with API key from .env
-        self.used_tokens = set()  # Track used tokens
+        self.solver = TwoCaptcha(os.getenv('2CAPTCHA_API_KEY'))
+        self.used_tokens = set()
+        self.current_phone = None
         
         # Load environment variables
         load_dotenv()
@@ -315,13 +317,16 @@ class CaptchaTokenExtractor:
             print(traceback.format_exc())
             return None
 
-    def process_single_tab(self, browser, results_queue):
+    def process_single_tab(self, browser, results_queue, phone_number):
         try:
+            # Store the phone number
+            self.current_phone = phone_number
+            
             # Get new tab
             tab = browser.new_tab()
             
             # Visit webpage
-            print("Loading webpage...")
+            print(f"\n{Fore.CYAN}Processing phone number: {Fore.YELLOW}{phone_number}{Style.RESET_ALL}")
             tab.get('https://lnnte-dncl.gc.ca/en/Consumer/Check-your-registration/#!/')
             
             # Wait for Angular to load and be ready
@@ -354,25 +359,24 @@ class CaptchaTokenExtractor:
                 print(f"Failed to initialize Angular: {str(e)}")
                 raise
             
-            # Execute JavaScript to manipulate Angular state
-            print("Setting up phone number...")
-            js_code = """
+            # Execute JavaScript to set the phone number
+            js_code = f"""
                 const element = document.querySelector('[ng-show="state==\\'number\\'"]');
-                if (!element) {
+                if (!element) {{
                     throw new Error('Could not find the Angular element');
-                }
+                }}
                 const scope = angular.element(element).scope();
-                if (!scope) {
+                if (!scope) {{
                     throw new Error('Could not get Angular scope');
-                }
-                scope.model = scope.model || {};
-                scope.model.phone = '514-519-5990';
+                }}
+                scope.model = scope.model || {{}};
+                scope.model.phone = '{phone_number}';
                 scope.state = 'confirm';
                 scope.$apply();
             """
             
             # Run the JavaScript and wait for page to load
-            tab.run_js_loaded(js_code)
+            tab.run_js(js_code)
             
             # Wait for state change and reCAPTCHA frame to load
             print("Waiting for reCAPTCHA frame to load...")
@@ -449,35 +453,349 @@ class CaptchaTokenExtractor:
                 
                 if token:
                     print("Successfully got token from 2captcha")
-                    if self.on_token_found:
-                        asyncio.run(self._handle_token_found(token))
-                    results_queue.put((True, token))
+                    
+                    # More comprehensive JavaScript to handle the reCAPTCHA
+                    js_solve_captcha = f"""
+                        // First set the response in textarea
+                        const textarea = document.querySelector('[name="g-recaptcha-response"]');
+                        if (textarea) {{
+                            textarea.style.display = 'block'; // Make it visible for debugging
+                            textarea.value = '{token}';
+                        }}
+
+                        // Set response in iframe textarea if it exists
+                        const iframes = document.getElementsByTagName('iframe');
+                        for (const iframe of iframes) {{
+                            try {{
+                                const iframeDocument = iframe.contentWindow.document;
+                                const iframeTextarea = iframeDocument.querySelector('[name="g-recaptcha-response"]');
+                                if (iframeTextarea) {{
+                                    iframeTextarea.value = '{token}';
+                                }}
+                            }} catch (e) {{
+                                // Cross-origin access might fail
+                                console.log('Could not access iframe:', e);
+                            }}
+                        }}
+
+                        // Trigger the grecaptcha callback
+                        try {{
+                            if (window.___grecaptcha_cfg) {{
+                                const clientIds = Object.keys(window.___grecaptcha_cfg.clients);
+                                
+                                for (const clientId of clientIds) {{
+                                    const client = window.___grecaptcha_cfg.clients[clientId];
+                                    
+                                    // Find callback in client object
+                                    for (const key in client) {{
+                                        if (client[key] && typeof client[key] === 'object') {{
+                                            const tokens = Object.keys(client[key]);
+                                            for (const token of tokens) {{
+                                                const obj = client[key][token];
+                                                if (obj && obj.callback) {{
+                                                    console.log('Found callback, executing...');
+                                                    obj.callback('{token}');
+                                                }}
+                                            }}
+                                        }}
+                                    }}
+                                }}
+                            }}
+                        }} catch (e) {{
+                            console.error('Error triggering callback:', e);
+                        }}
+
+                        // Alternative method to trigger verification
+                        try {{
+                            window.grecaptcha.enterprise.getResponse = function() {{ return '{token}'; }};
+                            window.grecaptcha.getResponse = function() {{ return '{token}'; }};
+                        }} catch (e) {{
+                            console.log('Could not override getResponse:', e);
+                        }}
+
+                        return document.querySelector('[name="g-recaptcha-response"]').value === '{token}';
+                    """
+                    
+                    print("Injecting and triggering reCAPTCHA solution...")
+                    success = tab.run_js(js_solve_captcha)
+                    print(f"Token injection result: {success}")
+                    
+                    # Wait for the reCAPTCHA to be processed
+                    time.sleep(3)
+                    
+                    # Verify the token was properly set
+                    js_verify = """
+                        const result = {
+                            'textarea_found': false,
+                            'textarea_value': null,
+                            'checkbox_found': false,
+                            'checkbox_checked': false,
+                            'debug': {
+                                'iframes_count': 0,
+                                'recaptcha_elements': []
+                            }
+                        };
+                        
+                        // Check main textarea
+                        const textarea = document.querySelector('[name="g-recaptcha-response"]');
+                        if (textarea) {
+                            result.textarea_found = true;
+                            result.textarea_value = textarea.value;
+                        }
+                        
+                        // Check all iframes for recaptcha elements
+                        const iframes = document.getElementsByTagName('iframe');
+                        result.debug.iframes_count = iframes.length;
+                        
+                        for (const iframe of iframes) {
+                            try {
+                                result.debug.recaptcha_elements.push({
+                                    'src': iframe.src,
+                                    'id': iframe.id,
+                                    'name': iframe.name,
+                                    'class': iframe.className
+                                });
+                                
+                                if (iframe.src && iframe.src.includes('recaptcha')) {
+                                    const checkbox = iframe.contentDocument.querySelector('.recaptcha-checkbox');
+                                    if (checkbox) {
+                                        result.checkbox_found = true;
+                                        result.checkbox_checked = checkbox.classList.contains('recaptcha-checkbox-checked');
+                                    }
+                                }
+                            } catch (e) {
+                                console.log('Could not access iframe:', e);
+                            }
+                        }
+                        
+                        return result;
+                    """
+
+                    verify_result = tab.run_js(js_verify)
+                    print("Verification details:")
+                    print(f"- Textarea found: {verify_result.get('textarea_found')}")
+                    print(f"- Textarea value set: {'Yes' if verify_result.get('textarea_value') else 'No'}")
+                    print(f"- Checkbox found: {verify_result.get('checkbox_found')}")
+                    print(f"- Checkbox checked: {verify_result.get('checkbox_checked')}")
+                    print("\nDebug information:")
+                    print(f"- Number of iframes: {verify_result.get('debug', {}).get('iframes_count')}")
+                    print("- ReCAPTCHA elements found:")
+                    for elem in verify_result.get('debug', {}).get('recaptcha_elements', []):
+                        print(f"  * {elem}")
+
+                    # If the verification shows the token wasn't properly set, try an alternative method
+                    if not verify_result.get('checkbox_checked'):
+                        print("\nTrying alternative method to trigger reCAPTCHA...")
+                        js_alternative = f"""
+                            try {{
+                                // Try to find the reCAPTCHA iframe
+                                const recaptchaFrame = Array.from(document.getElementsByTagName('iframe'))
+                                    .find(iframe => iframe.src && iframe.src.includes('recaptcha'));
+                                    
+                                if (recaptchaFrame) {{
+                                    // Force the checkbox to be checked
+                                    const frameDoc = recaptchaFrame.contentDocument;
+                                    const checkbox = frameDoc.querySelector('.recaptcha-checkbox');
+                                    if (checkbox) {{
+                                        checkbox.classList.add('recaptcha-checkbox-checked');
+                                    }}
+                                    
+                                    // Attempt to trigger verification
+                                    window.___grecaptcha_cfg.clients[0].aa.callback('{token}');
+                                    return true;
+                                }}
+                                return false;
+                            }} catch (e) {{
+                                console.error('Alternative method failed:', e);
+                                return false;
+                            }}
+                        """
+                        alternative_result = tab.run_js(js_alternative)
+                        print(f"Alternative method result: {alternative_result}")
+
+                    # Click the submit button
+                    print("Attempting to click the submit button...")
+                    js_click_button = """
+                        const button = document.querySelector('#wb-auto-2 > form > div > div.submit-container > button:nth-child(2)');
+                        if (button) {
+                            // Force enable the button if it's disabled
+                            button.disabled = false;
+                            button.click();
+                            return true;
+                        }
+                        return false;
+                    """
+                    
+                    if tab.run_js(js_click_button):
+                        print("Successfully clicked the submit button!")
+                        
+                        # Wait for Angular to process and update the view
+                        print("Waiting for results page to load...")
+                        js_wait_for_results = """
+                            return new Promise((resolve) => {
+                                const maxAttempts = 20;  // 20 * 500ms = 10 seconds max
+                                let attempts = 0;
+                                
+                                function checkResults() {
+                                    // Check if we're on results page using Angular state
+                                    const element = document.querySelector('[ng-if="state==\\'results\\'"]');
+                                    if (element && window.getComputedStyle(element).display !== 'none') {
+                                        // Get all the relevant information
+                                        const result = {
+                                            status: 'UNKNOWN',
+                                            phone: null,
+                                            registration_date: null,
+                                            raw_text: null,
+                                            error: null
+                                        };
+                                        
+                                        try {
+                                            // Get the registration status text
+                                            const statusDiv = document.querySelector('.rc-left');
+                                            if (statusDiv) {
+                                                result.raw_text = statusDiv.innerText.trim();
+                                                result.status = statusDiv.innerText.includes('currently registered') ? 'ACTIVE' : 'INACTIVE';
+                                            }
+                                            
+                                            // Get the phone number
+                                            const phoneDiv = document.querySelector('div[ng-if="result.existed"]');
+                                            if (phoneDiv) {
+                                                result.phone = phoneDiv.innerText.trim();
+                                            }
+                                            
+                                            // Get registration date if active
+                                            const dateDiv = document.querySelector('div[ng-if="userLang===\\'en\\'"]');
+                                            if (dateDiv) {
+                                                result.registration_date = dateDiv.innerText.trim();
+                                            }
+                                            
+                                            resolve({ loaded: true, data: result });
+                                            return;
+                                        } catch (e) {
+                                            result.error = `Error parsing results: ${e.message}`;
+                                            resolve({ loaded: true, data: result });
+                                            return;
+                                        }
+                                    }
+                                    
+                                    // Check for error messages
+                                    const errorMsg = document.body.innerText;
+                                    if (errorMsg.includes('error') || errorMsg.includes('Error')) {
+                                        resolve({ 
+                                            loaded: true, 
+                                            data: {
+                                                status: 'ERROR',
+                                                error: errorMsg.substring(0, 200)
+                                            }
+                                        });
+                                        return;
+                                    }
+                                    
+                                    // Continue checking if max attempts not reached
+                                    if (attempts < maxAttempts) {
+                                        attempts++;
+                                        setTimeout(checkResults, 500);
+                                    } else {
+                                        resolve({ 
+                                            loaded: false, 
+                                            data: {
+                                                status: 'ERROR',
+                                                error: 'Timeout waiting for results page'
+                                            }
+                                        });
+                                    }
+                                }
+                                
+                                checkResults();
+                            });
+                        """
+                        
+                        result = tab.run_js(js_wait_for_results)
+                        
+                        if result.get('loaded'):
+                            data = result.get('data', {})
+                            status = data.get('status')
+                            
+                            # Print result in a clear, formatted way
+                            print("\n" + "="*50)
+                            print(f"{Fore.CYAN}Results for phone number: {Fore.YELLOW}{self.current_phone}{Style.RESET_ALL}")
+                            print("-"*50)
+                            
+                            if status == 'ERROR':
+                                print(f"{Fore.RED}Status: ERROR")
+                                print(f"Error message: {data.get('error')}{Style.RESET_ALL}")
+                                results_queue.put((False, {
+                                    'status': 'ERROR',
+                                    'error': data.get('error'),
+                                    'phone': self.current_phone
+                                }))
+                            else:
+                                status_color = Fore.GREEN if status == 'ACTIVE' else Fore.RED
+                                print(f"{status_color}Status: {status}")
+                                print(f"Phone: {data.get('phone')}")
+                                if data.get('registration_date'):
+                                    print(f"Registration Date: {data.get('registration_date')}")
+                                print(f"Raw Text: {data.get('raw_text')}{Style.RESET_ALL}")
+                                
+                                # Create result dictionary
+                                result_data = {
+                                    'status': status,
+                                    'phone': self.current_phone,
+                                    'registration_date': data.get('registration_date'),
+                                    'Active': status == 'ACTIVE'
+                                }
+                                
+                                results_queue.put((True, result_data))
+                            
+                            print("="*50 + "\n")
+                            
+                        else:
+                            print(f"{Fore.RED}Failed to load results page{Style.RESET_ALL}")
+                            results_queue.put((False, {
+                                'status': 'ERROR',
+                                'error': 'Failed to load results page',
+                                'phone': self.current_phone
+                            }))
+                            # Wait 60 seconds after submitting form
+                            print(f"{Fore.CYAN}Waiting 60 seconds ...{Style.RESET_ALL}")
+                            time.sleep(120)
+                    else:
+                        print("Failed to find or click the submit button")
+                        results_queue.put((False, None))
                 else:
                     print("Failed to get token from 2captcha")
                     results_queue.put((False, None))
                     
             except Exception as e:
-                print(f"An error occurred: {str(e)}")
-                results_queue.put((False, None))
-                return
-                
-        except Exception as e:
-            print(f"Tab processing error: {str(e)}")
-            results_queue.put((False, None))
+                print(f"Tab processing error: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                results_queue.put((False, {
+                    'status': 'ERROR',
+                    'error': str(e),
+                    'phone': self.current_phone
+                }))
         finally:
             try:
                 tab.close()
             except:
                 pass
 
-    def extract_tokens(self):
+    def extract_tokens(self, phone_numbers):
         """
-        Main method to extract captcha tokens using parallel browser tabs.
-        Each tab will attempt to solve one captcha.
+        Main method to check DNCL status for phone numbers using parallel browser tabs.
+        Each tab will process one phone number and return its DNCL status.
+        
+        Args:
+            phone_numbers (list): List of phone numbers to check
+        
+        Returns:
+            list: List of dictionaries containing DNCL status results
         """
         print(f"\nStarting execution with {self.tabs_per_browser} parallel tabs")
         print("=" * 50)
 
+        results = []
         try:
             options = self.get_chrome_options()
             browser = Chromium(options)
@@ -485,27 +803,36 @@ class CaptchaTokenExtractor:
             results_queue = Queue()
             threads = []
             
-            for _ in range(self.tabs_per_browser):
-                thread = threading.Thread(target=self.process_single_tab, args=(browser, results_queue))
-                thread.start()
-                threads.append(thread)
-                time.sleep(1)  # Small delay between starting threads
-            
-            # Wait for all threads to complete
-            for thread in threads:
-                thread.join()
-            
-            # Process results
-            for _ in range(self.tabs_per_browser):
-                success, token = results_queue.get()
-                if success:
-                    self.results.successful.append(token)
-                else:
-                    self.results.failed.append(datetime.now())
-                self.results.total_attempts += 1
+            # Process phone numbers in batches of tabs_per_browser
+            for i in range(0, len(phone_numbers), self.tabs_per_browser):
+                batch = phone_numbers[i:i + self.tabs_per_browser]
+                threads = []
                 
-                # Print progress after each tab completion
-                self.results.print_progress()
+                for phone in batch:
+                    thread = threading.Thread(
+                        target=self.process_single_tab, 
+                        args=(browser, results_queue, phone)
+                    )
+                    thread.start()
+                    threads.append(thread)
+                    time.sleep(1)  # Small delay between starting threads
+                
+                # Wait for all threads in this batch to complete
+                for thread in threads:
+                    thread.join()
+                
+                # Process results for this batch
+                for _ in range(len(batch)):
+                    success, result = results_queue.get()
+                    if success:
+                        self.results.successful.append(result)
+                        results.append(result)
+                    else:
+                        self.results.failed.append(datetime.now())
+                        # Still append error results to return list
+                        results.append(result)
+                    self.results.total_attempts += 1
+                    self.results.print_progress()
             
         except Exception as e:
             print(f"Browser error: {str(e)}")
@@ -513,13 +840,4 @@ class CaptchaTokenExtractor:
             browser.quit()
             time.sleep(1)
 
-        # Print final results
-        print("\nFinal Results:")
-        print("=" * 50)
-        print(f"Total attempts completed: {self.results.total_attempts}")
-        print(f"Success rate: {self.results.success_rate:.1f}%")
-        print(f"Total successful tokens: {len(self.results.successful)}")
-        print(f"Failed attempts: {len(self.results.failed)}")
-        print("=" * 50)
-        
-        return self.results.successful
+        return results

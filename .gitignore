@@ -43,4 +43,4 @@ python/captcha_screenshots/
 python/chrome-data/
 
 # # Database files
-# *.db
+*.db
