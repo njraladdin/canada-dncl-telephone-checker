@@ -195,6 +195,9 @@ class DatabaseManager {
     }
 }
 
+// Add this at the top level of the file, after other constants
+let currentChromeDataDirIndex = 0;
+
 // Modify extractCapchaTokens function
 async function extractCapchaTokens() {
     const dbManager = new DatabaseManager();
@@ -236,67 +239,82 @@ async function extractCapchaTokens() {
                 break;
             }
 
-            const browsers = await Promise.all(
-                Array.from({ length: CONCURRENT_BROWSERS }, () => 
-                    launchBrowser(`./javascript/chrome-data/chrome-data-${Math.floor(Math.random() * 4) + 1}`)
-                )
-            );
-
+            // Track browser directories for this batch
+            const browserDirs = [];
+            
             try {
-                const pagePromises = numbers.map(async (numberRecord, index) => {
-                    const browser = browsers[index % CONCURRENT_BROWSERS];
-                    const pages = await browser.pages();
-                    const page = await browser.newPage(); //pages[0] || 
-                    
-                    try {
-                        await page.setUserAgent(USER_AGENT);
-                        if (ALLOW_PROXY) {
-                            await page.authenticate({
-                                username: process.env.PROXY_USERNAME,
-                                password: process.env.PROXY_PASSWORD
-                            });
-                        }
+                // Launch browsers with unique data directories
+                const browsers = await Promise.all(
+                    Array.from({ length: CONCURRENT_BROWSERS }, async () => {
+                        // Rotate through chrome data directories
+                        currentChromeDataDirIndex = (currentChromeDataDirIndex % 10) + 1;
+                        const chromeDataDir = `./javascript/chrome-data/chrome-data-${currentChromeDataDirIndex}`;
+                        browserDirs.push(chromeDataDir);
+                        return launchBrowser(chromeDataDir);
+                    })
+                );
 
-                        console.log(`Processing ${numberRecord.telephone}`);
-                        const result = await attemptCaptcha(page, numberRecord.telephone);
+                try {
+                    const pagePromises = numbers.map(async (numberRecord, index) => {
+                        const browser = browsers[index % CONCURRENT_BROWSERS];
+                        const page = await browser.newPage();
                         
-                        if (result) {
-                            resultTracker.addResult({
-                                success: true,
-                                status: result.status
-                            });
-                            await dbManager.updateNumberStatus(
-                                numberRecord.id, 
-                                result.status,
-                                result.registrationDate
-                            );
-                        } else {
+                        try {
+                            await page.setUserAgent(USER_AGENT);
+                            if (ALLOW_PROXY) {
+                                await page.authenticate({
+                                    username: process.env.PROXY_USERNAME,
+                                    password: process.env.PROXY_PASSWORD
+                                });
+                            }
+
+                            console.log(`Processing ${numberRecord.telephone}`);
+                            const result = await attemptCaptcha(page, numberRecord.telephone);
+                            
+                            if (result) {
+                                resultTracker.addResult({
+                                    success: true,
+                                    status: result.status
+                                });
+                                await dbManager.updateNumberStatus(
+                                    numberRecord.id, 
+                                    result.status,
+                                    result.registrationDate
+                                );
+                            } else {
+                                resultTracker.addResult({
+                                    success: false,
+                                    status: 'ERROR'
+                                });
+                                await dbManager.updateNumberStatus(numberRecord.id, 'ERROR', null);
+                            }
+
+                            // Print stats immediately after processing each number
+                            await printStats();
+
+                        } catch (error) {
                             resultTracker.addResult({
                                 success: false,
                                 status: 'ERROR'
                             });
+                            console.error(`Error processing ${numberRecord.telephone}:`, error);
                             await dbManager.updateNumberStatus(numberRecord.id, 'ERROR', null);
+                            // Print stats even after errors
+                            await printStats();
                         }
+                    });
 
-                        // Print stats immediately after processing each number
-                        await printStats();
+                    await Promise.all(pagePromises);
 
-                    } catch (error) {
-                        resultTracker.addResult({
-                            success: false,
-                            status: 'ERROR'
-                        });
-                        console.error(`Error processing ${numberRecord.telephone}:`, error);
-                        await dbManager.updateNumberStatus(numberRecord.id, 'ERROR', null);
-                        // Print stats even after errors
-                        await printStats();
-                    }
-                });
-
-                await Promise.all(pagePromises);
+                } finally {
+                    // Close browsers
+                    await Promise.all(browsers.map(browser => browser.close().catch(() => {})));
+                }
 
             } finally {
-                await Promise.all(browsers.map(browser => browser.close().catch(() => {})));
+                // Release the chrome data directories
+                browserDirs.forEach(dir => releaseChromeDataDir(dir));
+                // Add a small delay between batches
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
 
