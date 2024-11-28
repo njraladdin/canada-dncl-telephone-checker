@@ -198,6 +198,23 @@ class DatabaseManager {
             await this.db.close();
         }
     }
+
+    // Add this new method to DatabaseManager class
+    async resetErrorStatus() {
+        console.log(clc.yellow('\nResetting ERROR status numbers for retry...'));
+        const result = await this.db.run(`
+            UPDATE numbers 
+            SET dncl_status = NULL 
+            WHERE dncl_status = 'ERROR'
+        `);
+        const errorCount = await this.db.get(`
+            SELECT COUNT(*) as count 
+            FROM numbers 
+            WHERE dncl_status = 'ERROR'
+        `);
+        console.log(clc.green(`Reset ${errorCount.count} numbers with ERROR status\n`));
+        return errorCount.count;
+    }
 }
 
 // Add this at the top level of the file, after other constants
@@ -213,150 +230,167 @@ function formatPhoneNumber(phone) {
 async function extractCapchaTokens() {
     const dbManager = new DatabaseManager();
     await dbManager.init();
-    const startTime = Date.now();
-    let totalProcessed = 0;
+    let shouldContinue = true;
 
-    // Modify the printStats function to be simple and straightforward
-    const printStats = async () => {
-        const stats = resultTracker.getStats();
-        if (!stats) return;
+    while (shouldContinue) {
+        const startTime = Date.now();
+        let totalProcessed = 0;
 
-        const remaining = await dbManager.db.get(`
-            SELECT COUNT(*) as count 
-            FROM numbers 
-            WHERE (dncl_status IS NULL OR dncl_status = '')
-            AND telephone IS NOT NULL 
-            AND phone_type = 'MOBILE'
-        `);
+        // Modify the printStats function to be simple and straightforward
+        const printStats = async () => {
+            const stats = resultTracker.getStats();
+            if (!stats) return;
 
-        // Calculate ETA based on average time per number
-        const avgTimePerNumber = parseFloat(stats.avgTimePerNumber);
-        const remainingCount = remaining.count;
-        
-        // Simply multiply remaining count by average time
-        const estimatedTimeLeft = remainingCount * avgTimePerNumber;
-        
-        const hoursLeft = Math.floor(estimatedTimeLeft / 3600);
-        const minutesLeft = Math.floor((estimatedTimeLeft % 3600) / 60);
+            const remaining = await dbManager.db.get(`
+                SELECT COUNT(*) as count 
+                FROM numbers 
+                WHERE (dncl_status IS NULL OR dncl_status = '')
+                AND telephone IS NOT NULL 
+                AND phone_type = 'MOBILE'
+            `);
 
-        console.log(`\n[Stats] Success: ${clc.green(stats.successRate)}% | Avg Time (successful): ${clc.cyan(stats.avgTimePerNumber)}s | Total Processed: ${clc.yellow(stats.totalProcessed)} | Successfully Processed: ${clc.green(stats.successfullyProcessed)} | Remaining: ${clc.yellow(remaining.count)} | ETA: ${clc.magenta(`${hoursLeft}h ${minutesLeft}m`)}\n`);
-    };
+            // Calculate ETA based on average time per number
+            const avgTimePerNumber = parseFloat(stats.avgTimePerNumber);
+            const remainingCount = remaining.count;
+            
+            // Simply multiply remaining count by average time
+            const estimatedTimeLeft = remainingCount * avgTimePerNumber;
+            
+            const hoursLeft = Math.floor(estimatedTimeLeft / 3600);
+            const minutesLeft = Math.floor((estimatedTimeLeft % 3600) / 60);
 
-    try {
-        await dbManager.resetProcessingStatus();
+            console.log(`\n[Stats] Success: ${clc.green(stats.successRate)}% | Avg Time (successful): ${clc.cyan(stats.avgTimePerNumber)}s | Total Processed: ${clc.yellow(stats.totalProcessed)} | Successfully Processed: ${clc.green(stats.successfullyProcessed)} | Remaining: ${clc.yellow(remaining.count)} | ETA: ${clc.magenta(`${hoursLeft}h ${minutesLeft}m`)}\n`);
+        };
 
-        while (true) {
-            const numbers = await dbManager.getNextBatch(BATCH_SIZE);
-            if (numbers.length === 0) {
-                console.log('No more numbers to process');
-                break;
-            }
+        try {
+            await dbManager.resetProcessingStatus();
 
-            try {
-                // Launch browsers with unique data directories
-                const browsers = await Promise.all(
-                    Array.from({ length: CONCURRENT_BROWSERS }, async (_, index) => {
-                        // Delay each browser launch by index * 1000ms
-                        await new Promise(resolve => setTimeout(resolve, index * 1000));
-
-                        currentChromeDataDirIndex = (currentChromeDataDirIndex % 20) + 1;
-                        const chromeDataDir = `./chrome-data/chrome-data-${currentChromeDataDirIndex}`;
-                        return launchBrowser(chromeDataDir);
-                    })
-                );
+            while (true) {
+                const numbers = await dbManager.getNextBatch(BATCH_SIZE);
+                if (numbers.length === 0) {
+                    console.log('No more numbers to process');
+                    break;
+                }
 
                 try {
-                    const pagePromises = numbers.map(async (numberRecord, index) => {
-                        const browser = browsers[index % CONCURRENT_BROWSERS];
-                        let page = null;
-                        
-                        try {
-                            page = await browser.newPage();
-                            await page.setUserAgent(USER_AGENT);
-                            await page.setDefaultTimeout(30000);
-                            await page.setDefaultNavigationTimeout(30000);
-                            
-                            if (ALLOW_PROXY) {
-                                await page.authenticate({
-                                    username: process.env.PROXY_USERNAME,
-                                    password: process.env.PROXY_PASSWORD
-                                });
-                            }
+                    // Launch browsers with unique data directories
+                    const browsers = await Promise.all(
+                        Array.from({ length: CONCURRENT_BROWSERS }, async (_, index) => {
+                            // Delay each browser launch by index * 1000ms
+                            await new Promise(resolve => setTimeout(resolve, index * 1000));
 
-                            console.log(`Processing ${numberRecord.telephone}`);
-                            const result = await attemptCaptcha(page, numberRecord.telephone);
+                            currentChromeDataDirIndex = (currentChromeDataDirIndex % 20) + 1;
+                            const chromeDataDir = `./chrome-data/chrome-data-${currentChromeDataDirIndex}`;
+                            return launchBrowser(chromeDataDir);
+                        })
+                    );
+
+                    try {
+                        const pagePromises = numbers.map(async (numberRecord, index) => {
+                            const browser = browsers[index % CONCURRENT_BROWSERS];
+                            let page = null;
                             
-                            if (result) {
-                                resultTracker.addResult({
-                                    success: true,
-                                    status: result.status
-                                });
-                                await dbManager.updateNumberStatus(
-                                    numberRecord.id, 
-                                    result.status,
-                                    result.registrationDate
-                                );
-                            } else {
+                            try {
+                                page = await browser.newPage();
+                                await page.setUserAgent(USER_AGENT);
+                                await page.setDefaultTimeout(30000);
+                                await page.setDefaultNavigationTimeout(30000);
+                                
+                                if (ALLOW_PROXY) {
+                                    await page.authenticate({
+                                        username: process.env.PROXY_USERNAME,
+                                        password: process.env.PROXY_PASSWORD
+                                    });
+                                }
+
+                                console.log(`Processing ${numberRecord.telephone}`);
+                                const result = await attemptCaptcha(page, numberRecord.telephone);
+                                
+                                if (result) {
+                                    resultTracker.addResult({
+                                        success: true,
+                                        status: result.status
+                                    });
+                                    await dbManager.updateNumberStatus(
+                                        numberRecord.id, 
+                                        result.status,
+                                        result.registrationDate
+                                    );
+                                } else {
+                                    resultTracker.addResult({
+                                        success: false,
+                                        status: 'ERROR'
+                                    });
+                                    await dbManager.updateNumberStatus(numberRecord.id, 'ERROR', null);
+                                }
+
+                                // Print stats immediately after processing each number
+                                await printStats();
+
+                            } catch (error) {
                                 resultTracker.addResult({
                                     success: false,
                                     status: 'ERROR'
                                 });
+                                console.error(`Error processing ${numberRecord.telephone}:`, error);
                                 await dbManager.updateNumberStatus(numberRecord.id, 'ERROR', null);
+                                // Print stats even after errors
+                                await printStats();
+                            } finally {
+                                // Always close the page, even if there's an error
+                                if (page) {
+                                    await page.close().catch(err => 
+                                        console.error('Error closing page:', err)
+                                    );
+                                }
                             }
+                        });
 
-                            // Print stats immediately after processing each number
-                            await printStats();
+                        await Promise.all(pagePromises);
 
-                        } catch (error) {
-                            resultTracker.addResult({
-                                success: false,
-                                status: 'ERROR'
-                            });
-                            console.error(`Error processing ${numberRecord.telephone}:`, error);
-                            await dbManager.updateNumberStatus(numberRecord.id, 'ERROR', null);
-                            // Print stats even after errors
-                            await printStats();
-                        } finally {
-                            // Always close the page, even if there's an error
-                            if (page) {
-                                await page.close().catch(err => 
-                                    console.error('Error closing page:', err)
-                                );
-                            }
-                        }
-                    });
-
-                    await Promise.all(pagePromises);
+                    } finally {
+                        // Close browsers
+                        await Promise.all(browsers.map(browser => browser.close().catch(() => {})));
+                    }
 
                 } finally {
-                    // Close browsers
-                    await Promise.all(browsers.map(browser => browser.close().catch(() => {})));
+                    // Add a small delay between batches
+                    await new Promise(resolve => setTimeout(resolve, 2000));
                 }
 
-            } finally {
-                // Add a small delay between batches
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                // Update counts after each batch
+                totalProcessed += numbers.length;
             }
 
-            // Update counts after each batch
-            totalProcessed += numbers.length;
+            // Print final results
+            const totalTime = (Date.now() - startTime) / 1000;
+            const timePerNumber = totalTime / totalProcessed;
+            
+            console.log('\n=== Final Results ===');
+            console.log(`Total processed: ${clc.yellow(totalProcessed)}`);
+            console.log(`Total time: ${clc.cyan(totalTime.toFixed(2))} seconds`);
+            console.log(`Avg time per number: ${clc.cyan(timePerNumber.toFixed(2))} seconds`);
+            console.log('=====================\n');
+
+            // After completing the run, check for ERROR status numbers and retry if any exist
+            const errorCount = await dbManager.resetErrorStatus();
+            
+            if (errorCount > 0) {
+                console.log(clc.yellow(`\nFound ${errorCount} failed numbers to retry. Starting retry process...\n`));
+                // Continue the loop to process the reset numbers
+                continue;
+            } else {
+                console.log(clc.green('\nNo failed numbers to retry. Processing complete!\n'));
+                shouldContinue = false;
+            }
+
+        } catch (error) {
+            console.error(`Fatal error:`, error);
+            shouldContinue = false;
         }
-
-        // Print final results
-        const totalTime = (Date.now() - startTime) / 1000;
-        const timePerNumber = totalTime / totalProcessed;
-        
-        console.log('\n=== Final Results ===');
-        console.log(`Total processed: ${clc.yellow(totalProcessed)}`);
-        console.log(`Total time: ${clc.cyan(totalTime.toFixed(2))} seconds`);
-        console.log(`Avg time per number: ${clc.cyan(timePerNumber.toFixed(2))} seconds`);
-        console.log('=====================\n');
-
-    } catch (error) {
-        console.error(`Fatal error:`, error);
-    } finally {
-        await dbManager.close();
     }
+
+    await dbManager.close();
 }
 
 // Update launchBrowser function to remove request interception setup

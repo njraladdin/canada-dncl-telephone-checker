@@ -200,7 +200,7 @@ if (require.main === module) {
     });
 
     // Start DNCL processing
-    extractCapchaTokens().catch(error => {
-        console.error('Error in DNCL processing:', error);
-    });
+    // extractCapchaTokens().catch(error => {
+    //     console.error('Error in DNCL processing:', error);
+    // });
 }
