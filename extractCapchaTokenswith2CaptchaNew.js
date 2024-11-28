@@ -255,8 +255,9 @@ async function extractCapchaTokens() {
                 const browsers = await Promise.all(
                     Array.from({ length: CONCURRENT_BROWSERS }, async (_, index) => {
                         // Add delay between browser launches
-                        await new Promise(resolve => setTimeout(resolve, 3000));
-                        
+                       // await new Promise(resolve => setTimeout(resolve, 3000));
+                      // await new Promise(resolve => setTimeout(resolve, index * 1000));
+
                         currentChromeDataDirIndex = (currentChromeDataDirIndex % 10) + 1;
                         const chromeDataDir = `./chrome-data/chrome-data-${currentChromeDataDirIndex}`;
                         return launchBrowser(chromeDataDir);
@@ -429,9 +430,8 @@ async function solve2Captcha(sitekey, pageUrl) {
         
         while (attempts < maxAttempts) {
            // console.log(`Checking solution status, attempt ${attempts + 1}/${maxAttempts}`);
-           await new Promise(resolve => setTimeout(resolve, index * 1000));
 
-           // await new Promise(resolve => setTimeout(resolve, 10000));
+           await new Promise(resolve => setTimeout(resolve, 10000));
             
             const resultResponse = await axios.post('https://api.2captcha.com/getTaskResult', {
                 clientKey: APIKEY,
