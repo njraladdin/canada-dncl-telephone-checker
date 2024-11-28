@@ -16,8 +16,8 @@ const osPlatform = os.platform();
                 
 const executablePath = osPlatform.startsWith('win')  ? "C://Program Files//Google//Chrome//Application//chrome.exe" : "/usr/bin/google-chrome";
 
-const CONCURRENT_BROWSERS = 10;
-const BATCH_SIZE = 16;
+const CONCURRENT_BROWSERS = 16;
+const BATCH_SIZE = 32;
 
 const ALLOW_PROXY = false;
 
@@ -259,7 +259,7 @@ async function extractCapchaTokens() {
                         // Delay each browser launch by index * 1000ms
                         await new Promise(resolve => setTimeout(resolve, index * 1000));
 
-                        currentChromeDataDirIndex = (currentChromeDataDirIndex % 10) + 1;
+                        currentChromeDataDirIndex = (currentChromeDataDirIndex % 20) + 1;
                         const chromeDataDir = `./chrome-data/chrome-data-${currentChromeDataDirIndex}`;
                         return launchBrowser(chromeDataDir);
                     })
@@ -383,7 +383,7 @@ async function launchBrowser(userDataDir) {
             '--lang=en',
             '--disable-web-security',
             '--flag-switches-begin --disable-site-isolation-trials --flag-switches-end',
-            `--profile-directory=Profile ${Math.floor(Math.random() * 10) + 1}`,
+            `--profile-directory=Profile ${Math.floor(Math.random() * 20) + 1}`,
             ALLOW_PROXY ? `--proxy-server=${proxyUrl}` : ''
         ].filter(Boolean),
         ignoreDefaultArgs: ['--enable-automation', '--enable-blink-features=AutomationControlled'],
