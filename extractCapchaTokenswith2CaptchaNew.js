@@ -418,7 +418,7 @@ async function solve2Captcha(sitekey, pageUrl) {
                 taskId: taskId
             });
 
-           console.log('Result response:', resultResponse.data);
+           // console.log('Result response:', resultResponse.data);
 
             if (resultResponse.data.status === 'ready') {
                 console.log('Solution found!');
