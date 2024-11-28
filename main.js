@@ -12,7 +12,7 @@ const port = 5000;
 // Database connection helper
 async function getDb() {
     return open({
-        filename: '../numbers.db',
+        filename: './numbers.db',
         driver: sqlite3.Database
     });
 }

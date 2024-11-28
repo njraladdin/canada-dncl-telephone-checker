@@ -45,3 +45,5 @@ python/chrome-data/
 # # Database files
 *.db
 numbers.db
+node_modules/
+chrome-data/
