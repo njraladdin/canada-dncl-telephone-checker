@@ -16,7 +16,7 @@ const osPlatform = os.platform();
                 
 const executablePath = osPlatform.startsWith('win')  ? "C://Program Files//Google//Chrome//Application//chrome.exe" : "/usr/bin/google-chrome";
 
-const CONCURRENT_BROWSERS = 4;
+const CONCURRENT_BROWSERS = 2;
 const BATCH_SIZE = 12;
 
 const ALLOW_PROXY = false;
@@ -258,7 +258,7 @@ async function extractCapchaTokens() {
                         await new Promise(resolve => setTimeout(resolve, 3000));
                         
                         currentChromeDataDirIndex = (currentChromeDataDirIndex % 10) + 1;
-                        const chromeDataDir = `./javascript/chrome-data/chrome-data-${currentChromeDataDirIndex}`;
+                        const chromeDataDir = `./chrome-data/chrome-data-${currentChromeDataDirIndex}`;
                         return launchBrowser(chromeDataDir);
                     })
                 );
@@ -429,8 +429,9 @@ async function solve2Captcha(sitekey, pageUrl) {
         
         while (attempts < maxAttempts) {
            // console.log(`Checking solution status, attempt ${attempts + 1}/${maxAttempts}`);
-            
-            await new Promise(resolve => setTimeout(resolve, 10000));
+           await new Promise(resolve => setTimeout(resolve, index * 1000));
+
+           // await new Promise(resolve => setTimeout(resolve, 10000));
             
             const resultResponse = await axios.post('https://api.2captcha.com/getTaskResult', {
                 clientKey: APIKEY,
