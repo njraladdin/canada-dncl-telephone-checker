@@ -203,6 +203,12 @@ class DatabaseManager {
 // Add this at the top level of the file, after other constants
 let currentChromeDataDirIndex = 0;
 
+// Add this helper function near the top of the file after the constants
+function formatPhoneNumber(phone) {
+    // Trim whitespace and take first 12 characters
+    return phone.trim().slice(0, 12);
+}
+
 // Modify extractCapchaTokens function
 async function extractCapchaTokens() {
     const dbManager = new DatabaseManager();
@@ -521,6 +527,9 @@ async function solveCaptchaChallenge(page) {
 // Modify the attemptCaptcha function to use the new captcha solving approach
 async function attemptCaptcha(page, phoneNumber) {
     try {
+        // Format the phone number before using it
+        const formattedPhone = formatPhoneNumber(phoneNumber);
+        
         // Navigate to the initial page
         console.log(`Loading registration check page...`);
         await page.goto('https://lnnte-dncl.gc.ca/en/Consumer/Check-your-registration/#!/', {
@@ -528,25 +537,25 @@ async function attemptCaptcha(page, phoneNumber) {
             timeout: 120000
         });
 
-        // Wait for and fill in phone number
+        // Use formattedPhone when filling the input
         const phoneInput = await page.waitForSelector('#phone');
         await page.evaluate(() => document.querySelector('#phone').focus());
         
         // Clear the input first
-        await page.click('#phone', { clickCount: 3 }); // Triple click to select all
+        await page.click('#phone', { clickCount: 3 }); 
         await page.keyboard.press('Backspace');
 
-        // Type the number with verification
+        // Type the formatted number
         let attempts = 0;
         const maxAttempts = 3;
         
         while (attempts < maxAttempts) {
-            await page.type('#phone', phoneNumber, { delay: 30 });
+            await page.type('#phone', formattedPhone, { delay: 30 });
             
             // Verify the input value
             const inputValue = await page.$eval('#phone', el => el.value);
-            if (inputValue === phoneNumber) {
-                console.log(`Successfully entered phone number: ${phoneNumber}`);
+            if (inputValue === formattedPhone) {
+                console.log(`Successfully entered phone number: ${formattedPhone}`);
                 break;
             } else {
                 console.log(`Failed to enter number correctly. Attempt ${attempts + 1}. Got: ${inputValue}`);
@@ -616,14 +625,14 @@ async function attemptCaptcha(page, phoneNumber) {
                         'Content-Type': 'application/json'
                     },
                     data: JSON.stringify({
-                        "Phone": phoneNumber
+                        "Phone": formattedPhone
                     })
                 };
 
                 const response = await axios.request(config);
                 console.log('\n=== API Response ===');
                 console.log(`Status Code: ${clc.green(response.status)}`);
-                console.log(`Phone Number: ${clc.yellow(phoneNumber)}`);
+                console.log(`Phone Number: ${clc.yellow(formattedPhone)}`);
                 console.log(`Status: ${clc.green('ACTIVE')}`);
                 console.log(`Response Data: ${clc.cyan(JSON.stringify(response.data, null, 2))}`);
                 console.log('==================\n');
@@ -637,7 +646,7 @@ async function attemptCaptcha(page, phoneNumber) {
                 if (error.response?.status === 404) {
                     console.log('\n=== API Response ===');
                     console.log(`Status Code: ${clc.yellow(error.response.status)}`);
-                    console.log(`Phone Number: ${clc.yellow(phoneNumber)}`);
+                    console.log(`Phone Number: ${clc.yellow(formattedPhone)}`);
                     console.log(`Status: ${clc.yellow('INACTIVE')}`);
                     console.log('==================\n');
                     
