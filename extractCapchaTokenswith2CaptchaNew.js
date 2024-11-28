@@ -254,9 +254,8 @@ async function extractCapchaTokens() {
                 // Launch browsers with unique data directories
                 const browsers = await Promise.all(
                     Array.from({ length: CONCURRENT_BROWSERS }, async (_, index) => {
-                        // Add delay between browser launches
-                       // await new Promise(resolve => setTimeout(resolve, 3000));
-                      // await new Promise(resolve => setTimeout(resolve, index * 1000));
+                        // Delay each browser launch by index * 1000ms
+                        await new Promise(resolve => setTimeout(resolve, index * 1000));
 
                         currentChromeDataDirIndex = (currentChromeDataDirIndex % 10) + 1;
                         const chromeDataDir = `./chrome-data/chrome-data-${currentChromeDataDirIndex}`;
