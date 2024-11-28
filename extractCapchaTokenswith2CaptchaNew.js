@@ -557,7 +557,7 @@ async function attemptCaptcha(page, phoneNumber) {
 
         // Wait for element that confirms we're on next page
         await page.waitForSelector('#wb-auto-2 > form > div > div:nth-child(3) > div', {
-            timeout: 10000
+            timeout: 20000
         });
         console.log('Successfully moved to next page');
 
