@@ -30,9 +30,6 @@ async def send_dncl_request(phone_number: str, token: str, max_retries: int = 3)
     print(f"Using token (first 50 chars): {token[:50]}...")
     print(f"Token length: {len(token)}")
 
-    # Add a small delay before using a new token
-    await asyncio.sleep(5.5)  # 1.5 second delay to allow token to be fully activated
-
     for attempt in range(1, max_retries + 1):
         if attempt > 1:
             print(f"Retry attempt {attempt}/{max_retries}")

@@ -194,53 +194,49 @@ class TokenEventManager:
         print(f"\n{Back.GREEN}{Fore.BLACK} NEW TOKEN RECEIVED {Style.RESET_ALL}")
         print(f"{Fore.CYAN}Token: {Fore.YELLOW}{token[:50]}...{Style.RESET_ALL}\n")
         
-        while True:  # Keep processing numbers until token expires
-            # Get next engineer to check
-            engineer = self.db.get_next_engineer()
-            if not engineer:
-                print(f"{Fore.YELLOW}⚠️ No more numbers to check!{Style.RESET_ALL}")
-                return
+        # Get next engineer to check
+        engineer = self.db.get_next_engineer()
+        if not engineer:
+            print(f"{Fore.YELLOW}⚠️ No more numbers to check!{Style.RESET_ALL}")
+            return
                 
-            # Add a small delay between requests
-            await asyncio.sleep(1)  # 1 second delay between requests
+        # Send DNCL request
+        phone = engineer['telephone']
+        print(f"{Fore.CYAN}📞 Checking engineer {Fore.WHITE}{engineer['prenom']} {engineer['nom']} {Fore.YELLOW}({phone}){Style.RESET_ALL}")
+        
+        try:
+            result = await send_dncl_request(phone, token)
             
-            # Send DNCL request
-            phone = engineer['telephone']
-            print(f"{Fore.CYAN}📞 Checking engineer {Fore.WHITE}{engineer['prenom']} {engineer['nom']} {Fore.YELLOW}({phone}){Style.RESET_ALL}")
+            # Update engineer record
+            self.db.update_engineer_dncl_status(engineer['id'], result)
             
-            try:
-                result = await send_dncl_request(phone, token)
+            # Update progress
+            self.processed_count += 1
+            
+            # Print result
+            status = result.get('status', 'CHECKED')
+            if status == 'ERROR':
+                print(f"{Fore.RED}❌ {phone}: Error - {result.get('error', 'Unknown error')}{Style.RESET_ALL}")
+            elif status == 'INVALID':
+                print(f"{Fore.YELLOW}⚠️ {phone}: Invalid number{Style.RESET_ALL}")
+            else:
+                is_active = result.get('Active', False)
+                status = "ACTIVE" if is_active else "INACTIVE"
+                color = Fore.GREEN if is_active else Fore.RED
+                print(f"{color}✅ {phone}: {status}{Style.RESET_ALL}")
+            
+            self.print_progress_stats()
+            
+        except TokenExpiredError:
+            # Token has expired, mark the current number back as unprocessed
+            self.db.reset_engineer_status(engineer['id'])
+            print(f"{Fore.YELLOW}⚠️ Token expired, requesting new token...{Style.RESET_ALL}")
+            return  # Exit to get new token
                 
-                # Update engineer record
-                self.db.update_engineer_dncl_status(engineer['id'], result)
-                
-                # Update progress
-                self.processed_count += 1
-                
-                # Print result
-                status = result.get('status', 'CHECKED')
-                if status == 'ERROR':
-                    print(f"{Fore.RED}❌ {phone}: Error - {result.get('error', 'Unknown error')}{Style.RESET_ALL}")
-                elif status == 'INVALID':
-                    print(f"{Fore.YELLOW}⚠️ {phone}: Invalid number{Style.RESET_ALL}")
-                else:
-                    is_active = result.get('Active', False)
-                    status = "ACTIVE" if is_active else "INACTIVE"
-                    color = Fore.GREEN if is_active else Fore.RED
-                    print(f"{color}✅ {phone}: {status}{Style.RESET_ALL}")
-                
-                self.print_progress_stats()
-                
-            except TokenExpiredError:
-                # Token has expired, mark the current number back as unprocessed
-                self.db.reset_engineer_status(engineer['id'])
-                print(f"{Fore.YELLOW}⚠️ Token expired, requesting new token...{Style.RESET_ALL}")
-                return  # Exit to get new token
-                
-            except Exception as e:
-                # If there's an error, mark the engineer as ERROR so we can retry later
-                self.db.update_engineer_dncl_status(engineer['id'], {'status': 'ERROR', 'error': str(e)})
-                print(f"{Fore.RED}❌ {phone}: {str(e)}{Style.RESET_ALL}")
+        except Exception as e:
+            # If there's an error, mark the engineer as ERROR so we can retry later
+            self.db.update_engineer_dncl_status(engineer['id'], {'status': 'ERROR', 'error': str(e)})
+            print(f"{Fore.RED}❌ {phone}: {str(e)}{Style.RESET_ALL}")
 
 def start_progress_server():
     """Start the Flask progress server in a separate thread"""
@@ -307,31 +303,6 @@ async def main():
             else:
                 raise ValueError(f"Invalid BYPASSING_METHOD: {BYPASSING_METHOD}")
             
-            # Get list of phone numbers to process
-            db = DatabaseManager()
-            phone_numbers = []
-            
-            # Get up to 100 unprocessed numbers (adjust the limit as needed)
-            conn = sqlite3.connect(db.db_path)
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT telephone 
-                FROM numbers 
-                WHERE (dncl_status IS NULL OR dncl_status = '')
-                AND telephone IS NOT NULL 
-                AND phone_type = 'MOBILE'
-                LIMIT 100
-            """)
-            
-            phone_numbers = [row[0] for row in cursor.fetchall()]
-            conn.close()
-
-            if not phone_numbers:
-                print(f"{Fore.YELLOW}No phone numbers to process!{Style.RESET_ALL}")
-                return
-
-            print(f"{Fore.CYAN}Found {len(phone_numbers)} numbers to process{Style.RESET_ALL}")
-
             # Create the token extractor with our event handler
             extractor = ExtractorClass(
                 tabs_per_browser=2,
@@ -339,15 +310,15 @@ async def main():
                 on_token_found=event_manager.on_token_found
             )
             
-            # Extract tokens with phone numbers
+            # Extract tokens
             print(f"\n{Back.BLUE}{Fore.WHITE} Starting new token extraction cycle {Style.RESET_ALL}")
-            tokens = extractor.extract_tokens(phone_numbers)
+            tokens = extractor.extract_tokens()
             
             print(f"\n{Back.GREEN}{Fore.BLACK} EXTRACTION CYCLE COMPLETE {Style.RESET_ALL}")
             print(f"{Fore.CYAN}Total tokens found in this cycle: {Fore.YELLOW}{len(tokens)}{Style.RESET_ALL}")
             
             # Minimal delay before starting next cycle
-            await asyncio.sleep(2)
+            await asyncio.sleep(2)  # Just a tiny delay to prevent system overload
             
         except Exception as e:
             print(f"\n{Back.RED}{Fore.WHITE} Error in main loop: {str(e)} {Style.RESET_ALL}")
