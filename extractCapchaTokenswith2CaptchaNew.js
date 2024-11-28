@@ -17,12 +17,17 @@ const osPlatform = os.platform();
 const executablePath = osPlatform.startsWith('win')  ? "C://Program Files//Google//Chrome//Application//chrome.exe" : "/usr/bin/google-chrome";
 
 const CONCURRENT_BROWSERS = 6;
-const BATCH_SIZE = 10;
+const BATCH_SIZE = 12;
 
 const ALLOW_PROXY = false;
 
-// Initialize 2captcha solver with your API key
-const APIKEY = 'ebf194334f2a754eda785a2cb04d6226';
+// Add this line instead
+const APIKEY = process.env['2CAPTCHA_API_KEY'];
+
+// Optionally add a check to ensure the API key exists
+if (!APIKEY) {
+    throw new Error('2CAPTCHA_API_KEY is not set in environment variables');
+}
 
 // Define constant user agent to use throughout the app
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -242,8 +247,10 @@ async function extractCapchaTokens() {
             try {
                 // Launch browsers with unique data directories
                 const browsers = await Promise.all(
-                    Array.from({ length: CONCURRENT_BROWSERS }, async () => {
-                        // Rotate through chrome data directories
+                    Array.from({ length: CONCURRENT_BROWSERS }, async (_, index) => {
+                        // Add delay between browser launches
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+                        
                         currentChromeDataDirIndex = (currentChromeDataDirIndex % 10) + 1;
                         const chromeDataDir = `./javascript/chrome-data/chrome-data-${currentChromeDataDirIndex}`;
                         return launchBrowser(chromeDataDir);
@@ -257,6 +264,9 @@ async function extractCapchaTokens() {
                         
                         try {
                             await page.setUserAgent(USER_AGENT);
+                            await page.setDefaultTimeout(30000);
+                            await page.setDefaultNavigationTimeout(30000);
+                            
                             if (ALLOW_PROXY) {
                                 await page.authenticate({
                                     username: process.env.PROXY_USERNAME,
@@ -341,6 +351,7 @@ async function launchBrowser(userDataDir) {
         headless: true,
         executablePath: executablePath,
         userDataDir: userDataDir,
+        protocolTimeout: 30000,
         args: [
             '--no-sandbox',
             '--disable-gpu',
@@ -368,6 +379,8 @@ async function launchBrowser(userDataDir) {
         const page = await target.page();
         if (page) {
             await page.setUserAgent(USER_AGENT);
+            await page.setDefaultTimeout(30000);
+            await page.setDefaultNavigationTimeout(30000);
         }
     });
 
