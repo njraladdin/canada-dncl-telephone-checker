@@ -266,9 +266,10 @@ async function extractCapchaTokens() {
                 try {
                     const pagePromises = numbers.map(async (numberRecord, index) => {
                         const browser = browsers[index % CONCURRENT_BROWSERS];
-                        const page = await browser.newPage();
+                        let page = null;
                         
                         try {
+                            page = await browser.newPage();
                             await page.setUserAgent(USER_AGENT);
                             await page.setDefaultTimeout(30000);
                             await page.setDefaultNavigationTimeout(30000);
@@ -313,6 +314,13 @@ async function extractCapchaTokens() {
                             await dbManager.updateNumberStatus(numberRecord.id, 'ERROR', null);
                             // Print stats even after errors
                             await printStats();
+                        } finally {
+                            // Always close the page, even if there's an error
+                            if (page) {
+                                await page.close().catch(err => 
+                                    console.error('Error closing page:', err)
+                                );
+                            }
                         }
                     });
 
@@ -354,8 +362,8 @@ async function launchBrowser(userDataDir) {
     const proxyUrl = `${process.env.PROXY_HOST}:${process.env.PROXY_PORT}`;
 
     const browser = await puppeteerExtra.launch({
-        headless: "new",
-        executablePath: executablePath,
+        headless: true,
+        //executablePath: executablePath,
         userDataDir: userDataDir,
         protocolTimeout: 30000,
         args: [
