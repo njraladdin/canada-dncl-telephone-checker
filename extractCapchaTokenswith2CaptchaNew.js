@@ -545,51 +545,25 @@ async function attemptCaptcha(page, phoneNumber) {
             timeout: 120000
         });
 
-        // Use formattedPhone when filling the input
-        const phoneInput = await page.waitForSelector('#phone');
-        await page.evaluate(() => document.querySelector('#phone').focus());
-        
-        // Clear the input first
-        await page.click('#phone', { clickCount: 3 }); 
-        await page.keyboard.press('Backspace');
-
-        // Type the formatted number
-        let attempts = 0;
-        const maxAttempts = 3;
-        
-        while (attempts < maxAttempts) {
-            await page.type('#phone', formattedPhone, { delay: 30 });
-            
-            // Verify the input value
-            const inputValue = await page.$eval('#phone', el => el.value);
-            if (inputValue === formattedPhone) {
-                console.log(`Successfully entered phone number: ${formattedPhone}`);
-                break;
-            } else {
-                console.log(`Failed to enter number correctly. Attempt ${attempts + 1}. Got: ${inputValue}`);
-                await page.click('#phone', { clickCount: 3 });
-                await page.keyboard.press('Backspace');
+        // Use Angular to directly set the state and phone number
+        console.log('Setting Angular state...');
+        await page.evaluate((phone) => {
+            const element = document.querySelector('[ng-show="state==\'number\'"]');
+            if (!element) {
+                throw new Error('Could not find the Angular element');
             }
-            attempts++;
-            
-            if (attempts === maxAttempts) {
-                console.error(`Failed to enter phone number after ${maxAttempts} attempts`);
-                return false;
+            const scope = angular.element(element).scope();
+            if (!scope) {
+                throw new Error('Could not get Angular scope');
             }
-        }
-
-        // Click the next button
-        await page.click('button[type="submit"]');
-        console.log('Clicked next button to proceed to captcha page');
+            scope.model = scope.model || {};
+            scope.model.phone = phone;
+            scope.state = 'confirm';
+            scope.$apply();
+        }, formattedPhone);
 
         // Start timing here
         const captchaStartTime = Date.now();
-
-        // Wait for element that confirms we're on next page
-        await page.waitForSelector('#wb-auto-2 > form > div > div:nth-child(3) > div', {
-            timeout: 20000
-        });
-        console.log('Successfully moved to next page');
 
         // Wait for reCAPTCHA iframe to be present
         await page.waitForFunction(() => {
