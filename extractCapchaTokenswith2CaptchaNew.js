@@ -229,10 +229,12 @@ async function extractCapchaTokens() {
             AND phone_type = 'MOBILE'
         `);
 
-        // Calculate ETA based on successfully processed numbers only
-        const estimatedTimeLeft = stats.successfullyProcessed > 0 
-            ? (remaining.count * parseFloat(stats.avgTimePerNumber)) / CONCURRENT_BROWSERS 
-            : 0;
+        // Calculate ETA based on average time per number
+        const avgTimePerNumber = parseFloat(stats.avgTimePerNumber);
+        const remainingCount = remaining.count;
+        
+        // Simply multiply remaining count by average time
+        const estimatedTimeLeft = remainingCount * avgTimePerNumber;
         
         const hoursLeft = Math.floor(estimatedTimeLeft / 3600);
         const minutesLeft = Math.floor((estimatedTimeLeft % 3600) / 60);
