@@ -355,25 +355,14 @@ async function launchBrowser(userDataDir) {
 
     const browser = await puppeteerExtra.launch({
         headless: true,
-        executablePath: executablePath,
+       // executablePath: executablePath,
        // userDataDir: userDataDir,
         protocolTimeout: 30000,
         args: [
-            '--no-sandbox',
-            '--disable-gpu',
-            '--enable-webgl',
             '--window-size=1920,1080',
-            '--disable-dev-shm-usage',
-            '--disable-setuid-sandbox',
-            '--no-first-run',
-            '--no-default-browser-check',
-            '--password-store=basic',
             '--disable-blink-features=AutomationControlled',
-            '--disable-features=IsolateOrigins,site-per-process',
             '--lang=en',
-            '--disable-web-security',
-            '--flag-switches-begin --disable-site-isolation-trials --flag-switches-end',
-            `--profile-directory=Profile ${Math.floor(Math.random() * 10) + 1}`,
+           // `--profile-directory=Profile ${Math.floor(Math.random() * 10) + 1}`,
             ALLOW_PROXY ? `--proxy-server=${proxyUrl}` : ''
         ].filter(Boolean),
         ignoreDefaultArgs: ['--enable-automation', '--enable-blink-features=AutomationControlled'],
