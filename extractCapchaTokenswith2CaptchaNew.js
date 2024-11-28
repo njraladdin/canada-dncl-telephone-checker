@@ -16,8 +16,8 @@ const osPlatform = os.platform();
                 
 const executablePath = osPlatform.startsWith('win')  ? "C://Program Files//Google//Chrome//Application//chrome.exe" : "/usr/bin/google-chrome";
 
-const CONCURRENT_BROWSERS = 8;
-const BATCH_SIZE = 16;
+const CONCURRENT_BROWSERS = 10;
+const BATCH_SIZE = 10;
 
 const ALLOW_PROXY = false;
 
@@ -363,7 +363,7 @@ async function launchBrowser(userDataDir) {
 
     const browser = await puppeteerExtra.launch({
         headless: true,
-        //executablePath: executablePath,
+        executablePath: executablePath,
         userDataDir: userDataDir,
         protocolTimeout: 30000,
         args: [
