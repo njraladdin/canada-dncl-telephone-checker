@@ -16,8 +16,8 @@ const osPlatform = os.platform();
                 
 const executablePath = osPlatform.startsWith('win')  ? "C://Program Files//Google//Chrome//Application//chrome.exe" : "/usr/bin/google-chrome";
 
-const CONCURRENT_BROWSERS = 2;
-const BATCH_SIZE = 2;
+const CONCURRENT_BROWSERS = 6;
+const BATCH_SIZE = 10;
 
 const ALLOW_PROXY = false;
 
