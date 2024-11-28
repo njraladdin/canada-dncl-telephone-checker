@@ -239,9 +239,6 @@ async function extractCapchaTokens() {
                 break;
             }
 
-            // Track browser directories for this batch
-            const browserDirs = [];
-            
             try {
                 // Launch browsers with unique data directories
                 const browsers = await Promise.all(
@@ -249,7 +246,6 @@ async function extractCapchaTokens() {
                         // Rotate through chrome data directories
                         currentChromeDataDirIndex = (currentChromeDataDirIndex % 10) + 1;
                         const chromeDataDir = `./javascript/chrome-data/chrome-data-${currentChromeDataDirIndex}`;
-                        browserDirs.push(chromeDataDir);
                         return launchBrowser(chromeDataDir);
                     })
                 );
@@ -312,8 +308,6 @@ async function extractCapchaTokens() {
                 }
 
             } finally {
-                // Release the chrome data directories
-                browserDirs.forEach(dir => releaseChromeDataDir(dir));
                 // Add a small delay between batches
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
