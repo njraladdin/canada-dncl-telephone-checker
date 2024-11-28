@@ -2,7 +2,7 @@
 javascript/node_modules/
 javascript/package-lock.json
 javascript/yarn.lock
-
+package-lock.json
 # Environment variables
 .env
 .env.local
