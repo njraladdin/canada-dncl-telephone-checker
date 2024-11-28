@@ -36,13 +36,15 @@ class ResultTracker {
         this.firstProcessingTime = null;
     }
 
-    addResult(success) {
+    addResult(result) {
         if (!this.firstProcessingTime) {
             this.firstProcessingTime = Date.now();
         }
 
         this.results.push({
-            success,
+            success: result.success,
+            // Track if it was processed successfully (ACTIVE or INACTIVE)
+            processed: result.status === 'ACTIVE' || result.status === 'INACTIVE',
             timestamp: Date.now()
         });
         
@@ -54,18 +56,22 @@ class ResultTracker {
     getStats() {
         if (this.results.length === 0) return null;
 
+        const successfullyProcessed = this.results.filter(r => r.processed);
         const successCount = this.results.filter(r => r.success).length;
         const successRate = (successCount / this.results.length) * 100;
         
-        const totalElapsedSeconds = (Date.now() - this.startTime) / 1000;
-        
-        const avgTimePerNumber = totalElapsedSeconds / this.results.length;
+        // Calculate average time based only on successfully processed numbers
+        let avgTimePerNumber = 0;
+        if (successfullyProcessed.length > 0) {
+            const totalElapsedSeconds = (Date.now() - this.startTime) / 1000;
+            avgTimePerNumber = totalElapsedSeconds / successfullyProcessed.length;
+        }
 
         return {
             successRate: successRate.toFixed(2),
             avgTimePerNumber: avgTimePerNumber.toFixed(2),
             totalProcessed: this.results.length,
-            totalElapsedSeconds
+            successfullyProcessed: successfullyProcessed.length
         };
     }
 }
@@ -209,12 +215,15 @@ async function extractCapchaTokens() {
             AND phone_type = 'MOBILE'
         `);
 
-        // Calculate ETA based on total elapsed time and numbers processed
-        const estimatedTimeLeft = (remaining.count * parseFloat(stats.avgTimePerNumber)) / CONCURRENT_BROWSERS;
+        // Calculate ETA based on successfully processed numbers only
+        const estimatedTimeLeft = stats.successfullyProcessed > 0 
+            ? (remaining.count * parseFloat(stats.avgTimePerNumber)) / CONCURRENT_BROWSERS 
+            : 0;
+        
         const hoursLeft = Math.floor(estimatedTimeLeft / 3600);
         const minutesLeft = Math.floor((estimatedTimeLeft % 3600) / 60);
 
-        console.log(`\n[Stats] Success: ${clc.green(stats.successRate)}% | Avg Time: ${clc.cyan(stats.avgTimePerNumber)}s | Processed: ${clc.yellow(stats.totalProcessed)} | Remaining: ${clc.yellow(remaining.count)} | ETA: ${clc.magenta(`${hoursLeft}h ${minutesLeft}m`)}\n`);
+        console.log(`\n[Stats] Success: ${clc.green(stats.successRate)}% | Avg Time (successful): ${clc.cyan(stats.avgTimePerNumber)}s | Total Processed: ${clc.yellow(stats.totalProcessed)} | Successfully Processed: ${clc.green(stats.successfullyProcessed)} | Remaining: ${clc.yellow(remaining.count)} | ETA: ${clc.magenta(`${hoursLeft}h ${minutesLeft}m`)}\n`);
     };
 
     try {
@@ -237,7 +246,7 @@ async function extractCapchaTokens() {
                 const pagePromises = numbers.map(async (numberRecord, index) => {
                     const browser = browsers[index % CONCURRENT_BROWSERS];
                     const pages = await browser.pages();
-                    const page = pages[0] || await browser.newPage();
+                    const page = await browser.newPage(); //pages[0] || 
                     
                     try {
                         await page.setUserAgent(USER_AGENT);
@@ -252,14 +261,20 @@ async function extractCapchaTokens() {
                         const result = await attemptCaptcha(page, numberRecord.telephone);
                         
                         if (result) {
-                            resultTracker.addResult(true);
+                            resultTracker.addResult({
+                                success: true,
+                                status: result.status
+                            });
                             await dbManager.updateNumberStatus(
                                 numberRecord.id, 
                                 result.status,
                                 result.registrationDate
                             );
                         } else {
-                            resultTracker.addResult(false);
+                            resultTracker.addResult({
+                                success: false,
+                                status: 'ERROR'
+                            });
                             await dbManager.updateNumberStatus(numberRecord.id, 'ERROR', null);
                         }
 
@@ -267,7 +282,10 @@ async function extractCapchaTokens() {
                         await printStats();
 
                     } catch (error) {
-                        resultTracker.addResult(false);
+                        resultTracker.addResult({
+                            success: false,
+                            status: 'ERROR'
+                        });
                         console.error(`Error processing ${numberRecord.telephone}:`, error);
                         await dbManager.updateNumberStatus(numberRecord.id, 'ERROR', null);
                         // Print stats even after errors
