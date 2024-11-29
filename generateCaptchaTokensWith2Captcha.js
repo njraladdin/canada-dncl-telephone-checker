@@ -1,5 +1,4 @@
-const puppeteerExtra = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const puppeteer = require('puppeteer');
 const axios = require('axios');
 const os = require('os');
 const path = require('path');
@@ -23,9 +22,6 @@ const executablePath = osPlatform.startsWith('win')
 if (!APIKEY) {
     throw new Error('2CAPTCHA_API_KEY is not set in environment variables');
 }
-
-// Setup puppeteer with stealth plugin
-puppeteerExtra.use(StealthPlugin());
 
 // ResultTracker class (keeping this as a class since it manages state)
 class ResultTracker {
@@ -76,32 +72,16 @@ class ResultTracker {
 
 // Browser management functions
 async function launchBrowser(userDataDir) {
-    const proxyUrl = `${process.env.PROXY_HOST}:${process.env.PROXY_PORT}`;
-
-    const randomProfile = Math.floor(Math.random() * 20) + 1;
-    const browser = await puppeteerExtra.launch({
+    const browser = await puppeteer.launch({
         headless: true,
         executablePath: executablePath,
         userDataDir: userDataDir,
-        protocolTimeout: 30000,
         args: [
             '--no-sandbox',
-            '--disable-gpu',
-            '--enable-webgl',
-            '--window-size=1920,1080',
-            '--disable-dev-shm-usage',
             '--disable-setuid-sandbox',
-            '--no-first-run',
-            '--no-default-browser-check',
-            '--password-store=basic',
-            '--disable-blink-features=AutomationControlled',
-            '--disable-features=IsolateOrigins,site-per-process',
-            '--lang=en',
-            '--disable-web-security',
-            '--flag-switches-begin --disable-site-isolation-trials --flag-switches-end',
             `--profile-directory=Profile ${randomProfile}`,
-            ALLOW_PROXY ? `--proxy-server=${proxyUrl}` : ''
-        ]
+            ALLOW_PROXY ? `--proxy-server=${process.env.PROXY_HOST}:${process.env.PROXY_PORT}` : ''
+        ].filter(Boolean)
     });
 
     browser.on('targetcreated', async (target) => {
@@ -109,7 +89,6 @@ async function launchBrowser(userDataDir) {
         if (page) {
             await page.setUserAgent(USER_AGENT);
             await page.setDefaultTimeout(30000);
-            await page.setDefaultNavigationTimeout(30000);
         }
     });
 
@@ -118,9 +97,8 @@ async function launchBrowser(userDataDir) {
 
 async function launchBrowsers() {
     return Promise.all(
-        Array.from({ length: CONCURRENT_BROWSERS }, async (_, index) => {
-            await new Promise(resolve => setTimeout(resolve, index * 1000));
-            return launchBrowser(`./chrome-data/chrome-data-${index + 1}`);
+        Array.from({ length: CONCURRENT_BROWSERS }, async () => {
+            return launchBrowser();
         })
     );
 }
