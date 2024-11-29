@@ -43,7 +43,8 @@ python/captcha_screenshots/
 python/chrome-data/
 
 # # Database files
-*.db
-numbers.db
+
 node_modules/
 chrome-data/
+
+captcha_screenshots/
