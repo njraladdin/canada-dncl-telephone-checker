@@ -80,7 +80,7 @@ async function launchBrowser(userDataDir) {
 
     const browser = await puppeteerExtra.launch({
         headless: true,
-        executablePath: executablePath,
+       // executablePath: executablePath,
         userDataDir: userDataDir,
         protocolTimeout: 30000,
         args: [
