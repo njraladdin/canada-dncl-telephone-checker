@@ -11,6 +11,7 @@ dotenv.config();
 
 // Configuration
 const CONCURRENT_BROWSERS = 3;
+const TABS_PER_BROWSER = 2;
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const APIKEY = process.env['2CAPTCHA_API_KEY'];
 const ALLOW_PROXY = false;
@@ -281,15 +282,18 @@ async function solveCaptchaChallenge(page, resultTracker) {
 async function generateTokens(count, eventManager) {
     const resultTracker = new ResultTracker();
     const browsers = await launchBrowsers();
+    const totalConcurrentTabs = CONCURRENT_BROWSERS * TABS_PER_BROWSER;
 
     try {
         let tokensGenerated = 0;
         while (tokensGenerated < count) {
             const remainingTokens = count - tokensGenerated;
-            const batchSize = Math.min(remainingTokens, CONCURRENT_BROWSERS);
+            const batchSize = Math.min(remainingTokens, totalConcurrentTabs);
             
             const tokenPromises = Array(batchSize).fill().map(async (_, index) => {
-                const browser = browsers[index % CONCURRENT_BROWSERS];
+                // Calculate which browser to use based on the tab index
+                const browserIndex = Math.floor(index / TABS_PER_BROWSER);
+                const browser = browsers[browserIndex % CONCURRENT_BROWSERS];
                 const page = await browser.newPage();
                 
                 try {
