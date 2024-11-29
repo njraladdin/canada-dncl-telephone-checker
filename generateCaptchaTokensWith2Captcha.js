@@ -1,5 +1,4 @@
-const puppeteerExtra = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const puppeteer = require('puppeteer');
 const axios = require('axios');
 const os = require('os');
 const path = require('path');
@@ -23,9 +22,6 @@ const executablePath = osPlatform.startsWith('win')
 if (!APIKEY) {
     throw new Error('2CAPTCHA_API_KEY is not set in environment variables');
 }
-
-// Setup puppeteer with stealth plugin
-puppeteerExtra.use(StealthPlugin());
 
 // ResultTracker class (keeping this as a class since it manages state)
 class ResultTracker {
@@ -76,33 +72,13 @@ class ResultTracker {
 
 // Browser management functions
 async function launchBrowser(userDataDir) {
-    const proxyUrl = `${process.env.PROXY_HOST}:${process.env.PROXY_PORT}`;
-
-    const browser = await puppeteerExtra.launch({
+    const browser = await puppeteer.launch({
         headless: true,
-       // executablePath: executablePath,
-        userDataDir: userDataDir,
-        protocolTimeout: 30000,
         args: [
             '--no-sandbox',
-            '--disable-gpu',
-            '--enable-webgl',
-            '--window-size=1920,1080',
-            '--disable-dev-shm-usage',
             '--disable-setuid-sandbox',
-            '--no-first-run',
-            '--no-default-browser-check',
-            '--password-store=basic',
-            '--disable-blink-features=AutomationControlled',
-            '--disable-features=IsolateOrigins,site-per-process',
-            '--lang=en',
-            '--disable-web-security',
-            '--flag-switches-begin --disable-site-isolation-trials --flag-switches-end',
-         //   `--profile-directory=Profile ${Math.floor(Math.random() * 20) + 1}`,
-            ALLOW_PROXY ? `--proxy-server=${proxyUrl}` : ''
-        ].filter(Boolean),
-        ignoreDefaultArgs: ['--enable-automation', '--enable-blink-features=AutomationControlled'],
-        defaultViewport: null,
+            ALLOW_PROXY ? `--proxy-server=${process.env.PROXY_HOST}:${process.env.PROXY_PORT}` : ''
+        ].filter(Boolean)
     });
 
     browser.on('targetcreated', async (target) => {
@@ -110,7 +86,6 @@ async function launchBrowser(userDataDir) {
         if (page) {
             await page.setUserAgent(USER_AGENT);
             await page.setDefaultTimeout(30000);
-            await page.setDefaultNavigationTimeout(30000);
         }
     });
 
@@ -119,9 +94,8 @@ async function launchBrowser(userDataDir) {
 
 async function launchBrowsers() {
     return Promise.all(
-        Array.from({ length: CONCURRENT_BROWSERS }, async (_, index) => {
-            await new Promise(resolve => setTimeout(resolve, index * 1000));
-            return launchBrowser(`./chrome-data/chrome-data-${index + 1}`);
+        Array.from({ length: CONCURRENT_BROWSERS }, async () => {
+            return launchBrowser();
         })
     );
 }
@@ -240,46 +214,18 @@ async function solveCaptchaChallenge(page, resultTracker) {
             timeout: 120000
         });
 
-        // Wait for and fill in phone number
-        const phoneInput = await page.waitForSelector('#phone');
-        await page.evaluate(() => document.querySelector('#phone').focus());
-        
-        // Clear the input first
-        await page.click('#phone', { clickCount: 3 }); // Triple click to select all
-        await page.keyboard.press('Backspace');
-
-        // Type the number with verification
-        let attempts = 0;
-        const maxAttempts = 3;
-        
-        while (attempts < maxAttempts) {
-            await page.type('#phone', '514-519-5990', { delay: 30 });
+        // Set Angular state
+        await page.evaluate(() => {
+            const element = document.querySelector('[ng-show="state==\'number\'"]');
+            if (!element) throw new Error('Could not find the Angular element');
             
-            // Verify the input value
-            const inputValue = await page.$eval('#phone', el => el.value);
-            if (inputValue === '514-519-5990') {
-                console.log('Successfully entered phone number: 514-519-5990');
-                break;
-            } else {
-                console.log(`Failed to enter number correctly. Attempt ${attempts + 1}. Got: ${inputValue}`);
-                // Clear and try again
-                await page.click('#phone', { clickCount: 3 });
-                await page.keyboard.press('Backspace');
-            }
-            attempts++;
+            const scope = angular.element(element).scope();
+            if (!scope) throw new Error('Could not get Angular scope');
             
-            if (attempts === maxAttempts) {
-                console.error(`Failed to enter phone number after ${maxAttempts} attempts`);
-                return null;
-            }
-        }
-
-        // Small delay before clicking next button
-        await new Promise(resolve => setTimeout(resolve, 200 + Math.floor(Math.random() * 300)));
-        
-        // Click the next button
-        await page.click('button[type="submit"]');
-        console.log('Clicked next button to proceed to captcha page');
+            scope.model = scope.model || {};
+            scope.state = 'confirm';
+            scope.$apply();
+        });
 
         // Wait for reCAPTCHA iframe
         await page.waitForFunction(() => {
