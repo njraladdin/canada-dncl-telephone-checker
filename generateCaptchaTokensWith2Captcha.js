@@ -224,6 +224,14 @@ async function injectToken(page, token) {
     }, token);
 }
 
+async function ensureTempDir() {
+    const tempDir = path.join(__dirname, 'temp');
+    if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+    }
+    return tempDir;
+}
+
 async function solveCaptchaChallenge(page, resultTracker) {
     try {
         console.log('Loading registration check page...');
@@ -273,6 +281,25 @@ async function solveCaptchaChallenge(page, resultTracker) {
 
     } catch (error) {
         console.error('Error in solveCaptchaChallenge:', error);
+        
+        // Take screenshot on navigation timeout error
+        if (error.name === 'TimeoutError' && error.message.includes('Navigation timeout')) {
+            try {
+                const tempDir = await ensureTempDir();
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                const screenshotPath = path.join(tempDir, `timeout-error-${timestamp}.png`);
+                
+                await page.screenshot({
+                    path: screenshotPath,
+                    fullPage: true
+                });
+                
+                console.log(`Screenshot saved to: ${screenshotPath}`);
+            } catch (screenshotError) {
+                console.error('Failed to save screenshot:', screenshotError);
+            }
+        }
+
         resultTracker.addResult({ success: false, status: 'ERROR' });
         return null;
     }
