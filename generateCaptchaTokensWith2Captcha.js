@@ -240,18 +240,46 @@ async function solveCaptchaChallenge(page, resultTracker) {
             timeout: 120000
         });
 
-        // Set Angular state
-        await page.evaluate(() => {
-            const element = document.querySelector('[ng-show="state==\'number\'"]');
-            if (!element) throw new Error('Could not find the Angular element');
+        // Wait for and fill in phone number
+        const phoneInput = await page.waitForSelector('#phone');
+        await page.evaluate(() => document.querySelector('#phone').focus());
+        
+        // Clear the input first
+        await page.click('#phone', { clickCount: 3 }); // Triple click to select all
+        await page.keyboard.press('Backspace');
+
+        // Type the number with verification
+        let attempts = 0;
+        const maxAttempts = 3;
+        
+        while (attempts < maxAttempts) {
+            await page.type('#phone', '514-519-5990', { delay: 30 });
             
-            const scope = angular.element(element).scope();
-            if (!scope) throw new Error('Could not get Angular scope');
+            // Verify the input value
+            const inputValue = await page.$eval('#phone', el => el.value);
+            if (inputValue === '514-519-5990') {
+                console.log('Successfully entered phone number: 514-519-5990');
+                break;
+            } else {
+                console.log(`Failed to enter number correctly. Attempt ${attempts + 1}. Got: ${inputValue}`);
+                // Clear and try again
+                await page.click('#phone', { clickCount: 3 });
+                await page.keyboard.press('Backspace');
+            }
+            attempts++;
             
-            scope.model = scope.model || {};
-            scope.state = 'confirm';
-            scope.$apply();
-        });
+            if (attempts === maxAttempts) {
+                console.error(`Failed to enter phone number after ${maxAttempts} attempts`);
+                return null;
+            }
+        }
+
+        // Small delay before clicking next button
+        await new Promise(resolve => setTimeout(resolve, 200 + Math.floor(Math.random() * 300)));
+        
+        // Click the next button
+        await page.click('button[type="submit"]');
+        console.log('Clicked next button to proceed to captcha page');
 
         // Wait for reCAPTCHA iframe
         await page.waitForFunction(() => {
