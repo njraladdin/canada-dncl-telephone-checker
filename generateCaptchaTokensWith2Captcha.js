@@ -72,6 +72,7 @@ class ResultTracker {
 
 // Browser management functions
 async function launchBrowser(userDataDir) {
+    const randomProfile = Math.floor(Math.random() * 20) + 1;
     const browser = await puppeteer.launch({
         headless: true,
         executablePath: executablePath,
