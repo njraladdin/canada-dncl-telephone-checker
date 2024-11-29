@@ -78,6 +78,7 @@ class ResultTracker {
 async function launchBrowser(userDataDir) {
     const proxyUrl = `${process.env.PROXY_HOST}:${process.env.PROXY_PORT}`;
 
+    const randomProfile = Math.floor(Math.random() * 20) + 1;
     const browser = await puppeteerExtra.launch({
         headless: true,
         executablePath: executablePath,
@@ -98,11 +99,9 @@ async function launchBrowser(userDataDir) {
             '--lang=en',
             '--disable-web-security',
             '--flag-switches-begin --disable-site-isolation-trials --flag-switches-end',
-            `--profile-directory=Profile ${Math.floor(Math.random() * 20) + 1}`,
+            `--profile-directory=Profile ${randomProfile}`,
             ALLOW_PROXY ? `--proxy-server=${proxyUrl}` : ''
-        ].filter(Boolean),
-        ignoreDefaultArgs: ['--enable-automation', '--enable-blink-features=AutomationControlled'],
-        defaultViewport: null,
+        ]
     });
 
     browser.on('targetcreated', async (target) => {
