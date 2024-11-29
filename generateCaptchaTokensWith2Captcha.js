@@ -78,7 +78,7 @@ async function launchBrowser(userDataDir) {
     const proxyUrl = `${process.env.PROXY_HOST}:${process.env.PROXY_PORT}`;
 
     const browser = await puppeteerExtra.launch({
-        headless: false,
+        headless: true,
         executablePath: executablePath,
         userDataDir: userDataDir,
         protocolTimeout: 30000,
