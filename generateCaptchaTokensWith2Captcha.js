@@ -98,7 +98,7 @@ async function launchBrowser(userDataDir) {
             '--lang=en',
             '--disable-web-security',
             '--flag-switches-begin --disable-site-isolation-trials --flag-switches-end',
-            `--profile-directory=Profile ${Math.floor(Math.random() * 20) + 1}`,
+         //   `--profile-directory=Profile ${Math.floor(Math.random() * 20) + 1}`,
             ALLOW_PROXY ? `--proxy-server=${proxyUrl}` : ''
         ].filter(Boolean),
         ignoreDefaultArgs: ['--enable-automation', '--enable-blink-features=AutomationControlled'],
