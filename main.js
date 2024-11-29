@@ -15,7 +15,7 @@ const execPromise = util.promisify(exec);
 // Configuration
 const BATCH_SIZE = 6;
 const PORT = 5000;
-const CAPTCHA_METHOD = process.env.CAPTCHA_METHOD || '2captcha'; // '2captcha', 'audio', or 'visual'
+const CAPTCHA_METHOD = '2captcha'; // '2captcha', 'audio', or 'visual'
 
 // Core processing functions
 async function processBatch(db, numbers, statsTracker) {
