@@ -21,15 +21,21 @@ const CAPTCHA_METHOD = '2captcha'; // '2captcha', 'audio', or 'visual'
 async function processBatch(db, numbers, statsTracker) {
     const eventManager = new EventEmitter();
     
-    eventManager.on('tokenGenerated', async ({ token }) => {
-        const number = numbers.shift();
-        if (number) {
-            await processNumber(db, number, token);
+    eventManager.on('tokenGenerated', async ({ token, id, telephone }) => {
+        try {
+            const result = await sendDNCLRequest(telephone, token);
+            await db.updateNumberStatus(id, result.status, result.registrationDate);
             await statsTracker.updateStats(db);
+        } catch (error) {
+            console.error(`Error processing ${telephone}:`, error);
+            await db.updateNumberStatus(id, 'ERROR', null);
         }
     });
 
-    eventManager.on('tokenError', ({ error }) => console.error('Token error:', error));
+    eventManager.on('tokenError', async ({ error, id, telephone }) => {
+        console.error('Token error for', telephone, ':', error);
+        await db.updateNumberStatus(id, 'ERROR', null);
+    });
 
     try {
         let generateTokens;
@@ -47,24 +53,11 @@ async function processBatch(db, numbers, statsTracker) {
                 throw new Error(`Unknown CAPTCHA method: ${CAPTCHA_METHOD}`);
         }
 
-        await generateTokens(numbers.length, eventManager);
-        
-        if (numbers.length > 0) {
-            console.error(`${numbers.length} numbers remained unprocessed`);
-        }
+        // Pass the entire numbers array to generateTokens
+        await generateTokens(numbers, eventManager);
     } catch (error) {
         console.error('Error in batch processing:', error);
         throw error;
-    }
-}
-
-async function processNumber(db, number, token) {
-    try {
-        const result = await sendDNCLRequest(number.telephone, token);
-        await db.updateNumberStatus(number.id, result.status, result.registrationDate);
-    } catch (error) {
-        console.error(`Error processing ${number.telephone}:`, error);
-        await db.updateNumberStatus(number.id, 'ERROR', null);
     }
 }
 

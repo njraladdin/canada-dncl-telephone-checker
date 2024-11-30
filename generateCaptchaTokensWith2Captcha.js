@@ -10,7 +10,7 @@ const clc = require('cli-color');
 dotenv.config();
 
 // Configuration
-const CONCURRENT_BROWSERS = 8;
+const CONCURRENT_BROWSERS = 7;
 const TABS_PER_BROWSER = 2;
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const APIKEY = process.env['2CAPTCHA_API_KEY'];
@@ -306,34 +306,47 @@ async function solveCaptchaChallenge(page, resultTracker) {
 }
 
 // Main token generation function
-async function generateTokens(count, eventManager) {
+async function generateTokens(numbers, eventManager) {
     const resultTracker = new ResultTracker();
     const browsers = await launchBrowsers();
     const totalConcurrentTabs = CONCURRENT_BROWSERS * TABS_PER_BROWSER;
 
     try {
-        let tokensGenerated = 0;
-        while (tokensGenerated < count) {
-            const remainingTokens = count - tokensGenerated;
-            const batchSize = Math.min(remainingTokens, totalConcurrentTabs);
+        let processedCount = 0;
+        while (processedCount < numbers.length) {
+            // Get current batch of numbers
+            const currentBatch = numbers.slice(
+                processedCount, 
+                processedCount + totalConcurrentTabs
+            );
             
-            const tokenPromises = Array(batchSize).fill().map(async (_, index) => {
+            const tokenPromises = currentBatch.map(async (numberRecord, index) => {
                 await new Promise(resolve => setTimeout(resolve, index * 500));
                 
                 const browserIndex = Math.floor(index / TABS_PER_BROWSER);
                 const browser = browsers[browserIndex % CONCURRENT_BROWSERS];
                 const page = await browser.newPage();
-                
+
                 try {
                     await page.setUserAgent(USER_AGENT);
                     const token = await solveCaptchaChallenge(page, resultTracker);
+                    
                     if (token) {
-                        eventManager.emit('tokenGenerated', { token });
-                        tokensGenerated++;
+                        // Emit token with its associated number and ID
+                        eventManager.emit('tokenGenerated', { 
+                            token,
+                            id: numberRecord.id,
+                            telephone: numberRecord.telephone
+                        });
+                        processedCount++;
                     }
                 } catch (error) {
                     console.error('Error generating token:', error);
-                    eventManager.emit('tokenError', { error: error.message });
+                    eventManager.emit('tokenError', { 
+                        error: error.message,
+                        id: numberRecord.id,
+                        telephone: numberRecord.telephone
+                    });
                 } finally {
                     await page.close().catch(console.error);
                 }
@@ -342,9 +355,6 @@ async function generateTokens(count, eventManager) {
             await Promise.all(tokenPromises);
             await new Promise(resolve => setTimeout(resolve, 2000));
         }
-    } catch (error) {
-        console.error('Fatal error in token generation:', error);
-        throw error;
     } finally {
         await Promise.all(browsers.map(closeBrowser));
     }
