@@ -10,8 +10,8 @@ const clc = require('cli-color');
 dotenv.config();
 
 // Configuration
-const CONCURRENT_BROWSERS = 4;
-const TABS_PER_BROWSER = 6;
+const CONCURRENT_BROWSERS = 5;
+const TABS_PER_BROWSER = 3;
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const APIKEY = process.env['2CAPTCHA_API_KEY'];
 const ALLOW_PROXY = false;
