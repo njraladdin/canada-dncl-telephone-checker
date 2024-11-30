@@ -27,7 +27,7 @@ if (!APIKEY) {
 // Setup puppeteer with stealth plugin
 puppeteerExtra.use(StealthPlugin());
 
-// ResultTracker class (keeping this as a class since it manages state)
+// Add ResultTracker class at the top of the file (after imports)
 class ResultTracker {
     constructor() {
         this.results = [];
@@ -313,11 +313,15 @@ async function generateTokens(count, eventManager) {
 
     try {
         let tokensGenerated = 0;
+        
         while (tokensGenerated < count) {
             const remainingTokens = count - tokensGenerated;
             const batchSize = Math.min(remainingTokens, totalConcurrentTabs);
             
+            console.log(`\nStarting new batch: ${tokensGenerated + 1} to ${tokensGenerated + batchSize} of ${count}`);
+            
             const tokenPromises = Array(batchSize).fill().map(async (_, index) => {
+                // Add delay between spawning tabs
                 await new Promise(resolve => setTimeout(resolve, index * 500));
                 
                 const browserIndex = Math.floor(index / TABS_PER_BROWSER);
@@ -334,38 +338,73 @@ async function generateTokens(count, eventManager) {
                 } catch (error) {
                     console.error('Error generating token:', error);
                     eventManager.emit('tokenError', { error: error.message });
+                    failedAttempts++;
                 } finally {
                     await page.close().catch(console.error);
                 }
             });
 
+            // Wait for current batch to complete
             await Promise.all(tokenPromises);
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Add delay between batches
+            if (tokensGenerated < count) {
+                console.log('\nWaiting before starting next batch...');
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
         }
+
     } catch (error) {
-        console.error('Fatal error in token generation:', error);
+        console.error(clc.red('Fatal error in token generation:'), error);
         throw error;
     } finally {
         await Promise.all(browsers.map(closeBrowser));
     }
 }
 
-// Replace everything after generateTokens with this simple execution block
+// Update the main execution block at the bottom of the file
 if (require.main === module) {
+    const resultTracker = new ResultTracker();
+    
     const eventManager = {
         emit: (event, data) => {
             if (event === 'tokenGenerated') {
                 console.log(clc.green('\nToken generated:'));
                 console.log(clc.yellow(data.token.slice(0, 50) + '...\n'));
+                
+                // Display stats after each successful token
+                const stats = resultTracker.getStats();
+                if (stats) {
+                    console.log(clc.cyan('Current Statistics:'));
+                    console.log(clc.white('Success Rate: ') + clc.green(`${stats.successRate}%`));
+                    console.log(clc.white('Average Time Per Token: ') + clc.green(`${stats.avgTimePerNumber} seconds`));
+                    console.log(clc.white('Total Processed: ') + clc.green(stats.totalProcessed));
+                    console.log(clc.white('Successfully Processed: ') + clc.green(stats.successfullyProcessed));
+                    console.log('----------------------------------------');
+                }
+                
+                resultTracker.addResult({ success: true, status: 'ACTIVE' });
             } else if (event === 'tokenError') {
                 console.log(clc.red('\nError:', data.error, '\n'));
+                resultTracker.addResult({ success: false, status: 'INACTIVE' });
             }
         }
     };
 
     console.log(clc.cyan('Starting token generation...'));
     generateTokens(3, eventManager)
-        .then(() => console.log(clc.green('Done!')))
+        .then(() => {
+            console.log(clc.green('Done!'));
+            // Display final stats
+            const finalStats = resultTracker.getStats();
+            if (finalStats) {
+                console.log(clc.cyan('\nFinal Statistics:'));
+                console.log(clc.white('Final Success Rate: ') + clc.green(`${finalStats.successRate}%`));
+                console.log(clc.white('Final Average Time Per Token: ') + clc.green(`${finalStats.avgTimePerNumber} seconds`));
+                console.log(clc.white('Total Tokens Processed: ') + clc.green(finalStats.totalProcessed));
+                console.log(clc.white('Successfully Generated Tokens: ') + clc.green(finalStats.successfullyProcessed));
+            }
+        })
         .catch(console.error);
 } else {
     module.exports = generateTokens;
