@@ -7,11 +7,19 @@ const dotenv = require('dotenv');
 const fs = require('fs');
 const clc = require('cli-color');
 const undici = require('undici');
+const sqlite3 = require('sqlite3').verbose();
+const { open } = require('sqlite');
+const express = require('express');
+const ip = require('ip');
+const renderProcessingPage = require('./renderProcessingPage');
+const { formatPhoneNumber } = require('./sendDNCLRequest');
 
 dotenv.config();
 
 // Configuration
-const CONCURRENT_BROWSERS = 3;
+const CONCURRENT_BROWSERS = 5;
+const BATCH_SIZE = 5;
+
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const ALLOW_PROXY = false;
 const osPlatform = os.platform();
@@ -86,7 +94,7 @@ async function launchBrowser(userDataDir) {
     const randomProfile = Math.floor(Math.random() * 4) + 1;
 
     const browser = await puppeteerExtra.launch({
-        headless: false,
+        headless: true,
         executablePath: executablePath,
         userDataDir: userDataDir,
         protocolTimeout: 30000,
@@ -165,7 +173,7 @@ async function downloadAndTranscribeAudio(audioUrl) {
         while (downloadAttempts < maxDownloadAttempts) {
             try {
                 downloadAttempts++;
-                console.log(`Downloading audio attempt ${downloadAttempts}/${maxDownloadAttempts}`);
+                console.log(clc.cyan(`[Audio] Download attempt ${downloadAttempts}/${maxDownloadAttempts}`));
                 
                 const audioResponse = await axios.get(audioUrl, {
                     responseType: 'arraybuffer',
@@ -178,17 +186,16 @@ async function downloadAndTranscribeAudio(audioUrl) {
                 }
 
                 audioData = audioResponse.data;
-                console.log('Audio downloaded successfully');
+                console.log(clc.green('[Audio] Downloaded successfully'));
                 break;
 
             } catch (downloadError) {
-                console.error(`Download attempt ${downloadAttempts} failed:`, downloadError.message);
+                console.error(clc.red(`[Audio] Download attempt ${downloadAttempts} failed:`), downloadError.message);
                 if (downloadAttempts === maxDownloadAttempts) return null;
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
         }
 
-        // Randomly choose between WIT tokens
         const witTokens = [
             process.env.WIT_TOKEN,
             process.env.WIT_TOKEN_1,
@@ -197,7 +204,7 @@ async function downloadAndTranscribeAudio(audioUrl) {
         
         const witToken = witTokens[Math.floor(Math.random() * witTokens.length)];
 
-        console.log('Transcribing audio with wit.ai...');
+        console.log(clc.cyan('[Audio] Transcribing with wit.ai...'));
         const witResponse = await undici.request('https://api.wit.ai/speech?v=20220622', {
             method: 'POST',
             headers: {
@@ -216,18 +223,18 @@ async function downloadAndTranscribeAudio(audioUrl) {
 
         const lastTextMatch = fullResponse.match(/"text":\s*"([^"]+)"/g);
         if (!lastTextMatch) {
-            console.error('No transcription found');
+            console.error(clc.red('[Audio] No transcription found'));
             return null;
         }
 
         const lastText = lastTextMatch[lastTextMatch.length - 1];
         const audioTranscript = lastText.match(/"text":\s*"([^"]+)"/)[1];
-        console.log('Transcribed text:', audioTranscript);
+        console.log(clc.green('[Audio] Transcribed text:'), clc.yellow(audioTranscript));
 
         return audioTranscript;
 
     } catch (error) {
-        console.error('Error in audio transcription:', error);
+        console.error(clc.red('[Audio] Error in transcription:'), error);
         return null;
     }
 }
@@ -243,9 +250,9 @@ async function solveCaptchaChallenge(page) {
     try {
         const alertHandler = async dialog => {
             const message = dialog.message();
-            console.log('Alert detected:', message);
+            console.log(clc.yellow('[Captcha] Alert detected:'), message);
             if (message.includes('Cannot contact reCAPTCHA')) {
-                console.log('Detected reCAPTCHA connection error, moving on...');
+                console.log(clc.yellow('[Captcha] Detected reCAPTCHA connection error, moving on...'));
                 await dialog.accept();
                 return null;
             }
@@ -254,25 +261,22 @@ async function solveCaptchaChallenge(page) {
         
         page.on('dialog', alertHandler);
 
-        // Keep checking for the frame until we find it
         let recaptchaFrame = null;
         for (let i = 0; i < 5; i++) {
             const frames = await page.frames();
-            console.log(`Attempt ${i + 1} to find reCAPTCHA frame`);
+            console.log(clc.cyan(`[Captcha] Attempt ${i + 1} to find reCAPTCHA frame`));
             
             recaptchaFrame = frames.find(frame => frame.url().includes('google.com/recaptcha'));
 
             if (recaptchaFrame) {
-                console.log('Found recaptcha frame:', recaptchaFrame.url());
+                console.log(clc.green('[Captcha] Found recaptcha frame:'), recaptchaFrame.url());
                 
-                // Add more explicit waiting and verification
                 const selector = '#recaptcha-anchor > div.recaptcha-checkbox-border';
                 await recaptchaFrame.waitForSelector(selector, {
                     visible: true,
                     timeout: 20000
                 });
                 
-                // Ensure element is actually clickable
                 await recaptchaFrame.waitForFunction(
                     selector => {
                         const element = document.querySelector(selector);
@@ -283,10 +287,8 @@ async function solveCaptchaChallenge(page) {
                     selector
                 );
                 
-                // Small random delay before clicking (500-1500ms)
                 await new Promise(resolve => setTimeout(resolve, 500 + Math.floor(Math.random() * 1000)));
                 
-                // Try both click methods
                 try {
                     await recaptchaFrame.click(selector);
                 } catch (e) {
@@ -295,15 +297,14 @@ async function solveCaptchaChallenge(page) {
                     }, selector);
                 }
                 
-                console.log('Clicked recaptcha checkbox');
+                console.log(clc.green('[Captcha] Clicked checkbox'));
                 break;
             }
             
             await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
-        // After clicking checkbox, wait for either token or challenge
-        console.log('Waiting for result after checkbox click...');
+        console.log(clc.cyan('[Captcha] Waiting for result after checkbox click...'));
         
         try {
             // First check if we get an immediate token
@@ -329,7 +330,7 @@ async function solveCaptchaChallenge(page) {
             });
 
             if (immediateToken) {
-                console.log('Captcha solved immediately!');
+                console.log(clc.green('[Captcha] Captcha solved immediately!'));
                 return immediateToken;
             }
 
@@ -340,7 +341,7 @@ async function solveCaptchaChallenge(page) {
                     if (blockingMessage) {
                         const text = await bframe.$eval('.rc-doscaptcha-header-text', el => el.textContent);
                         if (text.includes('Try again later')) {
-                            console.log('Detected "Try again later" message. Moving on...');
+                            console.log(clc.yellow('[Captcha] Detected "Try again later" message. Moving on...'));
                             return true;
                         }
                     }
@@ -360,7 +361,7 @@ async function solveCaptchaChallenge(page) {
             }
 
             if (!bframe) {
-                console.log('Could not find bframe after retries');
+                console.log(clc.red('[Captcha] Could not find bframe after retries'));
                 return null;
             }
 
@@ -371,7 +372,7 @@ async function solveCaptchaChallenge(page) {
             });
             
             if (!audioButton) {
-                console.log('Audio button not found');
+                console.log(clc.red('[Captcha] Audio button not found'));
                 return null;
             }
 
@@ -408,25 +409,25 @@ async function solveCaptchaChallenge(page) {
                     ]);
 
                     if (!audioChallenge) {
-                        console.log('No audio challenge available or blocking message detected');
+                        console.log(clc.red('[Captcha] No audio challenge available or blocking message detected'));
                         return null;
                     }
 
-                    console.log('Audio challenge appeared');
+                    console.log(clc.green('[Captcha] Audio challenge appeared'));
 
                     // Get audio URL and transcribe
                     const audioUrl = await bframe.$eval('#audio-source', el => el.src);
-                    console.log('Got audio URL:', audioUrl);
+                    console.log(clc.green('[Captcha] Got audio URL:'), clc.yellow(audioUrl));
 
                     const transcription = await downloadAndTranscribeAudio(audioUrl);
                     if (!transcription) {
-                        console.log('Failed to get transcription, retrying...');
+                        console.log(clc.red('[Captcha] Failed to get transcription, retrying...'));
                         const reloadButton = await bframe.$('#recaptcha-reload-button');
                         await reloadButton.click({ delay: rdn(30, 150) });
                         continue;
                     }
 
-                    console.log('Got transcription:', transcription);
+                    console.log(clc.green('[Captcha] Got transcription:'), clc.yellow(transcription));
 
                     // Enter transcription
                     const input = await bframe.$('#audio-response');
@@ -458,12 +459,12 @@ async function solveCaptchaChallenge(page) {
                     });
 
                     if (token) {
-                       // console.log('Token:', token);
-                        console.log('Successfully solved captcha!');
+                        console.log(clc.green('Solution found!'));
+
                         return token;
                     }
 
-                    console.log('No token received, retrying...');
+                    console.log(clc.red('[Captcha] No token received, retrying...'));
                     continue;
 
                 } catch (error) {
@@ -472,41 +473,144 @@ async function solveCaptchaChallenge(page) {
                         return null;
                     }
                     
-                    console.error('Error in audio challenge loop:', error);
+                    console.error(clc.red('[Captcha] Error in audio challenge loop:'), error);
                     continue;
                 }
             }
         } catch (error) {
-            console.error('Fatal error in solveCaptcha:', error);
+            console.error(clc.red('[Captcha] Fatal error in solveCaptcha:'), error);
             return null;
         }
     } catch (error) {
-        console.error('Fatal error in solveCaptcha:', error);
+        console.error(clc.red('[Captcha] Fatal error in solveCaptcha:'), error);
         return null;
     }
 }
 
-// Update the main generateTokens function to use audio solving
-async function generateTokens(count, eventManager) {
-    const resultTracker = new ResultTracker();
+// Add DatabaseManager class after other classes
+class DatabaseManager {
+    constructor(dbPath = './numbers.db') {
+        this.dbPath = dbPath;
+    }
+
+    async init() {
+        this.db = await open({
+            filename: this.dbPath,
+            driver: sqlite3.Database
+        });
+    }
+
+    getDb() {
+        return this.db;
+    }
+
+    async getNextBatch(batchSize) {
+        console.log(clc.cyan(`\n[DB] Fetching next batch of ${batchSize} numbers...`));
+        
+        const numbers = await this.db.all(`
+            UPDATE numbers 
+            SET dncl_status = 'PROCESSING'
+            WHERE id IN (
+                SELECT id 
+                FROM numbers 
+                WHERE (dncl_status IS NULL OR dncl_status = '')
+                AND telephone IS NOT NULL 
+                AND phone_type = 'MOBILE'
+                LIMIT ?
+            )
+            RETURNING id, telephone
+        `, batchSize);
+
+        if (numbers.length > 0) {
+            console.log(clc.green(`[DB] Found ${numbers.length} numbers to process`));
+            numbers.forEach(n => console.log(clc.yellow(`[DB] ID: ${n.id}, Phone: ${n.telephone}`)));
+        }
+        
+        return numbers;
+    }
+
+    async updateNumberStatus(id, status, registrationDate = null) {
+        const currentTime = new Date().toISOString();
+        try {
+            await this.db.run(`
+                UPDATE numbers 
+                SET 
+                    dncl_status = ?,
+                    dncl_registration_date = ?,
+                    dncl_checked_at = ?
+                WHERE id = ?
+            `, [status, registrationDate, currentTime, id]);
+        } catch (error) {
+            console.error(clc.red(`Database update failed for ID ${id}:`), error.message);
+            throw error;
+        }
+    }
+
+    async resetProcessingStatus() {
+        await this.db.run(`
+            UPDATE numbers 
+            SET dncl_status = NULL 
+            WHERE dncl_status = 'PROCESSING'
+        `);
+    }
+
+    async close() {
+        if (this.db) {
+            await this.db.close();
+        }
+    }
+}
+
+// Modify the generateTokens function to include API requests and DB updates
+async function generateTokens(numbers, eventManager, resultTracker) {
+    console.log(clc.cyan('\n=== Starting Token Generation ==='));
+    console.log(clc.white('Total Numbers:'), clc.yellow(numbers.length));
+    console.log(clc.white('Concurrent Browsers:'), clc.yellow(CONCURRENT_BROWSERS));
+    console.log('===============================\n');
+
     const browsers = await launchBrowsers();
-    const tabsPerBrowser = Math.ceil(count / browsers.length);
+    const tabsPerBrowser = Math.ceil(numbers.length / browsers.length);
+    const dbManager = new DatabaseManager();
+    await dbManager.init();
 
     try {
         const allPromises = [];
         let tokensGenerated = 0;
 
-        // Distribute tabs across browsers
+        // Add printStats function inside generateTokens
+        const printStats = async () => {
+            const stats = resultTracker.getStats();
+            if (!stats) return;
+
+            const remaining = await dbManager.db.get(`
+                SELECT COUNT(*) as count 
+                FROM numbers 
+                WHERE (dncl_status IS NULL OR dncl_status = '')
+                AND telephone IS NOT NULL 
+                AND phone_type = 'MOBILE'
+            `);
+
+            const avgTimePerNumber = parseFloat(stats.avgTimePerNumber);
+            const remainingCount = remaining.count;
+            const estimatedTimeLeft = remainingCount * avgTimePerNumber;
+            const hoursLeft = Math.floor(estimatedTimeLeft / 3600);
+            const minutesLeft = Math.floor((estimatedTimeLeft % 3600) / 60);
+
+            console.log(`[Stats] Success: ${clc.green(stats.successRate)}% | Avg Time (successful): ${clc.cyan(stats.avgTimePerNumber)}s | Total Processed: ${clc.yellow(stats.totalProcessed)} | Successfully Processed: ${clc.green(stats.successfullyProcessed)} | Remaining: ${clc.yellow(remaining.count)} | ETA: ${clc.magenta(`${hoursLeft}h ${minutesLeft}m`)}`);
+        };
+
         for (let browserIndex = 0; browserIndex < browsers.length; browserIndex++) {
             const browser = browsers[browserIndex];
             const tabPromises = [];
 
-            // Calculate how many tabs this browser should handle
-            const remainingTokens = count - tokensGenerated;
+            const remainingTokens = numbers.length - tokensGenerated;
             const tabsForThisBrowser = Math.min(tabsPerBrowser, remainingTokens);
 
-            // Create multiple tabs for this browser
+            console.log(clc.cyan(`\n[Browser ${browserIndex + 1}] Launching with ${tabsForThisBrowser} tabs`));
+
             for (let tabIndex = 0; tabIndex < tabsForThisBrowser; tabIndex++) {
+                const currentNumber = numbers[tokensGenerated];
+                
                 const tabPromise = (async () => {
                     const page = await browser.newPage();
                     
@@ -517,7 +621,6 @@ async function generateTokens(count, eventManager) {
                             timeout: 120000
                         });
 
-                        // Set Angular state
                         await page.evaluate(() => {
                             const element = document.querySelector('[ng-show="state==\'number\'"]');
                             if (!element) throw new Error('Could not find Angular element');
@@ -528,96 +631,285 @@ async function generateTokens(count, eventManager) {
                         });
 
                         const token = await solveCaptchaChallenge(page);
+                        
                         if (token) {
-                            eventManager.emit('tokenGenerated', { token });
-                            tokensGenerated++;
-                            resultTracker.addResult({ success: true, status: 'ACTIVE' });
-                        } else {
-                            resultTracker.addResult({ success: false, status: 'ERROR' });
-                        }
+                            // Make API request with the token
+                            try {
+                                const config = {
+                                    method: 'post',
+                                    url: 'https://public-api.lnnte-dncl.gc.ca/v1/Consumer/Check',
+                                    headers: { 
+                                        'accept': 'application/json, text/plain, */*', 
+                                        'accept-language': 'en', 
+                                        'authorization-captcha': token,
+                                        'dnt': '1', 
+                                        'origin': 'https://lnnte-dncl.gc.ca', 
+                                        'referer': 'https://lnnte-dncl.gc.ca/', 
+                                        'sec-ch-ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"', 
+                                        'sec-ch-ua-mobile': '?0', 
+                                        'sec-ch-ua-platform': '"Windows"', 
+                                        'sec-fetch-dest': 'empty', 
+                                        'sec-fetch-mode': 'cors', 
+                                        'sec-fetch-site': 'same-site', 
+                                        'user-agent': USER_AGENT,
+                                        'Content-Type': 'application/json'
+                                    },
+                                    data: JSON.stringify({
+                                        "Phone": formatPhoneNumber(currentNumber.telephone)
+                                    })
+                                };
 
-                        // Display stats after each attempt
-                        const stats = resultTracker.getStats();
-                        if (stats) {
-                            console.log(clc.cyan('\nCurrent Statistics:'));
-                            console.log(clc.white('Success Rate: ') + clc.green(`${stats.successRate}%`));
-                            console.log(clc.white('Average Time Per Token: ') + clc.green(`${stats.avgTimePerNumber} seconds`));
-                            console.log(clc.white('Total Processed: ') + clc.green(stats.totalProcessed));
-                            console.log(clc.white('Successfully Processed: ') + clc.green(stats.successfullyProcessed));
-                            console.log('----------------------------------------');
+                                const response = await axios.request(config);
+                                console.log('\n=== API Response ===');
+                                console.log(`Status Code: ${clc.green(response.status)}`);
+                                console.log(`Phone Number: ${clc.yellow(currentNumber.telephone)}`);
+                                console.log(`Formatted Phone: ${clc.yellow(formatPhoneNumber(currentNumber.telephone))}`);
+                                console.log(`Status: ${clc.green('ACTIVE')}`);
+                                console.log(`Response Data: ${clc.cyan(JSON.stringify(response.data, null, 2))}`);
+                                console.log('==================\n');
+
+                                console.log('\n=== Database Update ===');
+                                console.log(`ID: ${clc.yellow(currentNumber.id)}`);
+                                console.log(`Status: ${clc.green('ACTIVE')}`);
+                                console.log(`Registration Date: ${clc.cyan(response.data.AddedAt)}`);
+                                console.log(`Update Time: ${clc.cyan(new Date().toISOString())}`);
+                                console.log('====================\n');
+
+                                await dbManager.updateNumberStatus(
+                                    currentNumber.id,
+                                    'ACTIVE',
+                                    response.data.AddedAt
+                                );
+
+                                resultTracker.addResult({ success: true, status: 'ACTIVE' });
+                                await printStats();
+
+                            } catch (error) {
+                                if (error.response?.status === 404) {
+                                    console.log('\n=== API Response ===');
+                                    console.log(`Status Code: ${clc.yellow(error.response.status)}`);
+                                    console.log(`Phone Number: ${clc.yellow(currentNumber.telephone)}`);
+                                    console.log(`Status: ${clc.yellow('INACTIVE')}`);
+                                    console.log('==================\n');
+
+                                    console.log('\n=== Database Update ===');
+                                    console.log(`ID: ${clc.yellow(currentNumber.id)}`);
+                                    console.log(`Status: ${clc.yellow('INACTIVE')}`);
+                                    console.log(`Registration Date: ${clc.cyan('N/A')}`);
+                                    console.log(`Update Time: ${clc.cyan(new Date().toISOString())}`);
+                                    console.log('====================\n');
+
+                                    await dbManager.updateNumberStatus(
+                                        currentNumber.id,
+                                        'INACTIVE',
+                                        null
+                                    );
+
+                                    resultTracker.addResult({ success: true, status: 'INACTIVE' });
+                                    await printStats();
+                                } else if (error.response?.status === 400) {
+                                    console.error('\n=== API Error (400) ===');
+                                    console.error(`Status Code: ${clc.red(error.response.status)}`);
+                                    console.error(`Phone Number: ${clc.yellow(currentNumber.telephone)}`);
+                                    console.error(`Error Message: ${clc.red(error.message)}`);
+                                    console.error('Response Data:', clc.red(JSON.stringify(error.response.data, null, 2)));
+                                    if (error.response.data?.message) {
+                                        console.error('Error Text:', clc.red(error.response.data.message));
+                                    }
+                                    console.error('=====================\n');
+
+                                    // Check if the error is due to invalid area code
+                                    if (error.response.data?.ModelState?.['model.Phone']?.includes('Phone number area code is invalid.')) {
+                                        console.log('\n=== Database Update ===');
+                                        console.log(`ID: ${clc.yellow(currentNumber.id)}`);
+                                        console.log(`Status: ${clc.yellow('INVALID')}`);
+                                        console.log(`Registration Date: ${clc.cyan('N/A')}`);
+                                        console.log(`Update Time: ${clc.cyan(new Date().toISOString())}`);
+                                        console.log('====================\n');
+
+                                        await dbManager.updateNumberStatus(
+                                            currentNumber.id,
+                                            'INVALID',
+                                            null
+                                        );
+                                        
+                                        resultTracker.addResult({ success: true, status: 'INVALID' });
+                                        await printStats();
+                                    } else {
+                                        console.log('\n=== Database Update ===');
+                                        console.log(`ID: ${clc.yellow(currentNumber.id)}`);
+                                        console.log(`Status: ${clc.red('ERROR')}`);
+                                        console.log(`Registration Date: ${clc.cyan('N/A')}`);
+                                        console.log(`Update Time: ${clc.cyan(new Date().toISOString())}`);
+                                        console.log('====================\n');
+
+                                        await dbManager.updateNumberStatus(
+                                            currentNumber.id,
+                                            'ERROR',
+                                            null
+                                        );
+                                        
+                                        resultTracker.addResult({ success: false, status: 'ERROR' });
+                                        await printStats();
+                                    }
+                                } else {
+                                    console.error('\n=== API Error ===');
+                                    console.error(`Status Code: ${clc.red(error.response?.status || 'N/A')}`);
+                                    console.error(`Error Message: ${clc.red(error.message)}`);
+                                    if (error.response?.data) {
+                                        console.error(`Response Data: ${clc.red(JSON.stringify(error.response.data, null, 2))}`);
+                                    }
+                                    console.error('==================\n');
+
+                                    await dbManager.updateNumberStatus(
+                                        currentNumber.id,
+                                        'ERROR',
+                                        null
+                                    );
+
+                                    resultTracker.addResult({ success: false, status: 'ERROR' });
+                                    await printStats();
+                                }
+                            }
+                        } else {
+                            await dbManager.updateNumberStatus(
+                                currentNumber.id,
+                                'ERROR',
+                                null
+                            );
+                            resultTracker.addResult({ success: false, status: 'ERROR' });
+                            await printStats();
                         }
 
                     } catch (error) {
-                        console.error('Error generating token:', error);
-                        eventManager.emit('tokenError', { error: error.message });
+                        console.error(`Error processing ${currentNumber.telephone}:`, error);
+                        await dbManager.updateNumberStatus(
+                            currentNumber.id,
+                            'ERROR',
+                            null
+                        );
                         resultTracker.addResult({ success: false, status: 'ERROR' });
+                        await printStats();
                     } finally {
-                        await page.close().catch(console.error);
+                        if (page) {
+                            await page.close().catch(console.error);
+                        }
                     }
                 })();
 
                 tabPromises.push(tabPromise);
                 tokensGenerated++;
-
-                // Add small delay between opening tabs
                 await new Promise(resolve => setTimeout(resolve, 500));
             }
 
             allPromises.push(...tabPromises);
         }
 
-        // Wait for all tabs to complete
         await Promise.all(allPromises);
 
     } finally {
         await Promise.all(browsers.map(closeBrowser));
+        await dbManager.close();
     }
 }
 
-// Update the main execution block at the bottom of the file
-if (require.main === module) {
-    const resultTracker = new ResultTracker(); // Create tracker instance
-    
-    const eventManager = {
-        emit: (event, data) => {
-            if (event === 'tokenGenerated') {
-                console.log(clc.green('\nToken generated:'));
-                console.log(clc.yellow(data.token.slice(0, 50) + '...\n'));
-                
-                // Display stats after each successful token
-                const stats = resultTracker.getStats();
-                if (stats) {
-                    console.log(clc.cyan('Current Statistics:'));
-                    console.log(clc.white('Success Rate: ') + clc.green(`${stats.successRate}%`));
-                    console.log(clc.white('Average Time Per Token: ') + clc.green(`${stats.avgTimePerNumber} seconds`));
-                    console.log(clc.white('Total Processed: ') + clc.green(stats.totalProcessed));
-                    console.log(clc.white('Successfully Processed: ') + clc.green(stats.successfullyProcessed));
-                    console.log('----------------------------------------');
-                }
-                
-                resultTracker.addResult({ success: true, status: 'ACTIVE' });
-            } else if (event === 'tokenError') {
-                console.log(clc.red('\nError:', data.error, '\n'));
-                resultTracker.addResult({ success: false, status: 'INACTIVE' });
-            }
-        }
-    };
+// Add Express server setup at the bottom
+const PORT = 5000;
+const app = express();
 
-    console.log(clc.cyan('Starting token generation...'));
-    generateTokens(3, eventManager)
-        .then(() => {
-            console.log(clc.green('Done!'));
-            // Display final stats
-            const finalStats = resultTracker.getStats();
-            if (finalStats) {
-                console.log(clc.cyan('\nFinal Statistics:'));
-                console.log(clc.white('Final Success Rate: ') + clc.green(`${finalStats.successRate}%`));
-                console.log(clc.white('Final Average Time Per Token: ') + clc.green(`${finalStats.avgTimePerNumber} seconds`));
-                console.log(clc.white('Total Tokens Processed: ') + clc.green(finalStats.totalProcessed));
-                console.log(clc.white('Successfully Generated Tokens: ') + clc.green(finalStats.successfullyProcessed));
+app.get('/', async (req, res) => {
+    const db = new DatabaseManager();
+    try {
+        await db.init();
+        const html = await renderProcessingPage(db, req);
+        res.send(html);
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).send('Internal Server Error');
+    } finally {
+        if (db) {
+            await db.close();
+        }
+    }
+});
+
+// Add this function after DatabaseManager class
+async function extractCapchaTokens() {
+    const dbManager = new DatabaseManager();
+    await dbManager.init();
+    let shouldContinue = true;
+    const resultTracker = new ResultTracker();
+
+    while (shouldContinue) {
+        const startTime = Date.now();
+        let totalProcessed = 0;
+
+        try {
+            await dbManager.resetProcessingStatus();
+
+            while (true) {
+                const numbers = await dbManager.getNextBatch(BATCH_SIZE);
+                if (numbers.length === 0) {
+                    console.log('No more numbers to process');
+                    break;
+                }
+
+                await generateTokens(numbers, {
+                    emit: (event, data) => {
+                        if (event === 'tokenGenerated') {
+                            console.log(clc.green('\nToken generated for:'), data.telephone);
+                            console.log(clc.yellow(data.token.slice(0, 50) + '...\n'));
+                        } else if (event === 'tokenError') {
+                            console.log(clc.red('\nError for', data.telephone + ':', data.error, '\n'));
+                        }
+                    }
+                }, resultTracker);
+
+                totalProcessed += numbers.length;
             }
-        })
-        .catch(console.error);
+
+            const totalTime = (Date.now() - startTime) / 1000;
+            const timePerNumber = totalTime / totalProcessed;
+            
+            console.log('\n=== Final Results ===');
+            console.log(`Total processed: ${clc.yellow(totalProcessed)}`);
+            console.log(`Total time: ${clc.cyan(totalTime.toFixed(2))} seconds`);
+            console.log(`Avg time per number: ${clc.cyan(timePerNumber.toFixed(2))} seconds`);
+            console.log('=====================\n');
+
+            const errorCount = await dbManager.resetErrorStatus();
+            
+            if (errorCount > 0) {
+                console.log(clc.yellow(`\nFound ${errorCount} failed numbers to retry. Starting retry process...\n`));
+                continue;
+            } else {
+                console.log(clc.green('\nNo failed numbers to retry. Processing complete!\n'));
+                shouldContinue = false;
+            }
+
+        } catch (error) {
+            console.error(`Fatal error:`, error);
+            shouldContinue = false;
+        }
+    }
+
+    await dbManager.close();
+}
+
+// Update the bottom of the file
+if (require.main === module) {
+    // Start Express server
+    app.listen(PORT, () => {
+        console.log('\n=== Progress Server Running ===');
+        console.log(`Local:   http://localhost:${PORT}`);
+        console.log(`Network: http://${ip.address()}:${PORT}`);
+        console.log('===========================\n');
+    });
+
+    // Start the DNCL processing
+    extractCapchaTokens().catch(error => {
+        console.error('Fatal error in DNCL processing:', error);
+    });
 } else {
-    module.exports = generateTokens;
+    module.exports = extractCapchaTokens;
 }

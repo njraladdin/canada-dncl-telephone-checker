@@ -6,28 +6,36 @@ const path = require('path');
 const dotenv = require('dotenv');
 const fs = require('fs');
 const clc = require('cli-color');
+const sqlite3 = require('sqlite3').verbose();
+const { open } = require('sqlite');
+const express = require('express');
+const ip = require('ip');
+const renderProcessingPage = require('./renderProcessingPage');
 
 dotenv.config();
 
-// Configuration
-const CONCURRENT_BROWSERS = 10;
-const TABS_PER_BROWSER = 1;
-const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-const APIKEY = process.env['2CAPTCHA_API_KEY'];
-const ALLOW_PROXY = false;
+puppeteerExtra.use(StealthPlugin());
 const osPlatform = os.platform();
-const executablePath = osPlatform.startsWith('win') 
-    ? "C://Program Files//Google//Chrome//Application//chrome.exe" 
-    : "/usr/bin/google-chrome";
+                
+const executablePath = osPlatform.startsWith('win')  ? "C://Program Files//Google//Chrome//Application//chrome.exe" : "/usr/bin/google-chrome";
 
+const CONCURRENT_BROWSERS = 6;
+const BATCH_SIZE = 16;
+
+const ALLOW_PROXY = false;
+
+// Add this line instead
+const APIKEY = process.env['2CAPTCHA_API_KEY'];
+
+// Optionally add a check to ensure the API key exists
 if (!APIKEY) {
     throw new Error('2CAPTCHA_API_KEY is not set in environment variables');
 }
 
-// Setup puppeteer with stealth plugin
-puppeteerExtra.use(StealthPlugin());
+// Define constant user agent to use throughout the app
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
-// ResultTracker class (keeping this as a class since it manages state)
+// Add this class near the top of the file, after the constants
 class ResultTracker {
     constructor() {
         this.results = [];
@@ -43,6 +51,7 @@ class ResultTracker {
 
         this.results.push({
             success: result.success,
+            // Track if it was processed successfully (ACTIVE or INACTIVE)
             processed: result.status === 'ACTIVE' || result.status === 'INACTIVE',
             timestamp: Date.now()
         });
@@ -59,6 +68,7 @@ class ResultTracker {
         const successCount = this.results.filter(r => r.success).length;
         const successRate = (successCount / this.results.length) * 100;
         
+        // Calculate average time based only on successfully processed numbers
         let avgTimePerNumber = 0;
         if (successfullyProcessed.length > 0) {
             const totalElapsedSeconds = (Date.now() - this.startTime) / 1000;
@@ -74,7 +84,343 @@ class ResultTracker {
     }
 }
 
-// Browser management functions
+// Add this as a global variable after the ResultTracker class
+const resultTracker = new ResultTracker();
+
+// Move results object declaration to the top level, before any function declarations
+const results = {
+    successful: [],
+    failed: [],
+    startTime: Date.now(),
+    _totalAttempts: 0,
+    getSuccessRate() {
+        const total = this.successful.length + this.failed.length;
+        return total ? ((this.successful.length / total) * 100).toFixed(2) : 0;
+    },
+    getTimeStats() {
+        const totalTimeSeconds = (Date.now() - this.startTime) / 1000;
+        const totalAttempts = this.successful.length + this.failed.length;
+        const timePerAttempt = totalAttempts ? (totalTimeSeconds / totalAttempts).toFixed(2) : 0;
+        
+        return {
+            totalTime: totalTimeSeconds.toFixed(2),
+            timePerAttempt
+        };
+    },
+
+};
+
+function getDefaultChromeUserDataDir() {
+    if (/^win/i.test(osPlatform)) {
+        return path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'User Data');
+    } else if (/^darwin/i.test(osPlatform)) {  // macOS
+        return path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome');
+    } else {  // Linux
+        return path.join(os.homedir(), '.config', 'google-chrome');
+    }
+}
+
+// Add new DatabaseManager class
+class DatabaseManager {
+    constructor(dbPath = './numbers.db') {
+        this.dbPath = dbPath;
+    }
+
+    async init() {
+        this.db = await open({
+            filename: this.dbPath,
+            driver: sqlite3.Database
+        });
+    }
+
+    getDb() {
+        return this.db;
+    }
+
+    async getNextBatch(batchSize) {
+        console.log(`Fetching next batch of ${batchSize} numbers...`);
+        
+        const numbers = await this.db.all(`
+            UPDATE numbers 
+            SET dncl_status = 'PROCESSING'
+            WHERE id IN (
+                SELECT id 
+                FROM numbers 
+                WHERE (dncl_status IS NULL OR dncl_status = '')
+                AND telephone IS NOT NULL 
+                AND phone_type = 'MOBILE'
+                LIMIT ?
+            )
+            RETURNING id, telephone
+        `, batchSize);
+
+        if (numbers.length > 0) {
+            console.log(`Found ${numbers.length} numbers to process`);
+            numbers.forEach(n => console.log(`ID: ${n.id}, Phone: ${n.telephone}`));
+        }
+        
+        return numbers;
+    }
+
+    async updateNumberStatus(id, status, registrationDate = null) {
+        const currentTime = new Date().toISOString();
+        console.log(`\n=== Database Update ===`);
+        console.log(`ID: ${clc.yellow(id)}`);
+        console.log(`Status: ${clc.cyan(status)}`);
+        console.log(`Registration Date: ${clc.cyan(registrationDate || 'N/A')}`);
+        console.log(`Update Time: ${clc.cyan(currentTime)}`);
+        console.log('====================\n');
+
+        try {
+            await this.db.run(`
+                UPDATE numbers 
+                SET 
+                    dncl_status = ?,
+                    dncl_registration_date = ?,
+                    dncl_checked_at = ?
+                WHERE id = ?
+            `, [status, registrationDate, currentTime, id]);
+
+            const updated = await this.db.get(
+                'SELECT dncl_status, dncl_registration_date FROM numbers WHERE id = ?',
+                id
+            );
+
+        } catch (error) {
+            console.error(clc.red(`Database update failed for ID ${id}:`), error.message);
+            throw error;
+        }
+    }
+
+    async resetProcessingStatus() {
+        await this.db.run(`
+            UPDATE numbers 
+            SET dncl_status = NULL 
+            WHERE dncl_status = 'PROCESSING'
+        `);
+    }
+
+    async close() {
+        if (this.db) {
+            await this.db.close();
+        }
+    }
+
+    // Add this new method to DatabaseManager class
+    async resetErrorStatus() {
+        console.log(clc.yellow('\nResetting ERROR status numbers for retry...'));
+        const result = await this.db.run(`
+            UPDATE numbers 
+            SET dncl_status = NULL 
+            WHERE dncl_status = 'ERROR'
+        `);
+        const errorCount = await this.db.get(`
+            SELECT COUNT(*) as count 
+            FROM numbers 
+            WHERE dncl_status = 'ERROR'
+        `);
+        console.log(clc.green(`Reset ${errorCount.count} numbers with ERROR status\n`));
+        return errorCount.count;
+    }
+
+    // Add this new method to DatabaseManager class
+    async resetNullStatusCheckedAt() {
+        console.log(clc.yellow('\nResetting dncl_checked_at for records with null status...'));
+        const result = await this.db.run(`
+            UPDATE numbers 
+            SET dncl_checked_at = NULL 
+            WHERE DNCL_status IS NULL
+        `);
+        const nullStatusCount = await this.db.get(`
+            SELECT COUNT(*) as count 
+            FROM numbers 
+            WHERE DNCL_status IS NULL
+        `);
+        console.log(clc.green(`Reset dncl_checked_at for ${nullStatusCount.count} numbers with null status\n`));
+        return nullStatusCount.count;
+    }
+}
+
+// Add this at the top level of the file, after other constants
+let currentChromeDataDirIndex = 0;
+
+// Add this helper function near the top of the file after the constants
+function formatPhoneNumber(phone) {
+    // Trim whitespace and take first 12 characters
+    return phone.trim().slice(0, 12);
+}
+
+// Modify extractCapchaTokens function
+async function extractCapchaTokens() {
+    const dbManager = new DatabaseManager();
+    await dbManager.init();
+    let shouldContinue = true;
+
+    // Add this line after init()
+  //  await dbManager.resetNullStatusCheckedAt();
+
+    while (shouldContinue) {
+        const startTime = Date.now();
+        let totalProcessed = 0;
+
+        // Modify the printStats function to be simple and straightforward
+        const printStats = async () => {
+            const stats = resultTracker.getStats();
+            if (!stats) return;
+
+            const remaining = await dbManager.db.get(`
+                SELECT COUNT(*) as count 
+                FROM numbers 
+                WHERE (dncl_status IS NULL OR dncl_status = '')
+                AND telephone IS NOT NULL 
+                AND phone_type = 'MOBILE'
+            `);
+
+            // Calculate ETA based on average time per number
+            const avgTimePerNumber = parseFloat(stats.avgTimePerNumber);
+            const remainingCount = remaining.count;
+            
+            // Simply multiply remaining count by average time
+            const estimatedTimeLeft = remainingCount * avgTimePerNumber;
+            
+            const hoursLeft = Math.floor(estimatedTimeLeft / 3600);
+            const minutesLeft = Math.floor((estimatedTimeLeft % 3600) / 60);
+
+            console.log(`\n[Stats] Success: ${clc.green(stats.successRate)}% | Avg Time (successful): ${clc.cyan(stats.avgTimePerNumber)}s | Total Processed: ${clc.yellow(stats.totalProcessed)} | Successfully Processed: ${clc.green(stats.successfullyProcessed)} | Remaining: ${clc.yellow(remaining.count)} | ETA: ${clc.magenta(`${hoursLeft}h ${minutesLeft}m`)}\n`);
+        };
+
+        try {
+            await dbManager.resetProcessingStatus();
+
+            while (true) {
+                const numbers = await dbManager.getNextBatch(BATCH_SIZE);
+                if (numbers.length === 0) {
+                    console.log('No more numbers to process');
+                    break;
+                }
+
+                try {
+                    // Launch browsers with unique data directories
+                    const browsers = await Promise.all(
+                        Array.from({ length: CONCURRENT_BROWSERS }, async (_, index) => {
+                            // Delay each browser launch by index * 1000ms
+                            await new Promise(resolve => setTimeout(resolve, index * 1000));
+
+                            currentChromeDataDirIndex = (currentChromeDataDirIndex % 20) + 1;
+                            const chromeDataDir = `./chrome-data/chrome-data-${currentChromeDataDirIndex}`;
+                            return launchBrowser(chromeDataDir);
+                        })
+                    );
+
+                    try {
+                        const pagePromises = numbers.map(async (numberRecord, index) => {
+                            const browser = browsers[index % CONCURRENT_BROWSERS];
+                            let page = null;
+                            
+                            try {
+                                page = await browser.newPage();
+                                await page.setUserAgent(USER_AGENT);
+                                await page.setDefaultTimeout(30000);
+                                await page.setDefaultNavigationTimeout(30000);
+                                
+                                if (ALLOW_PROXY) {
+                                    await page.authenticate({
+                                        username: process.env.PROXY_USERNAME,
+                                        password: process.env.PROXY_PASSWORD
+                                    });
+                                }
+
+                                console.log(`Processing ${numberRecord.telephone}`);
+                                const result = await attemptCaptcha(page, numberRecord.telephone);
+                                
+                                if (result) {
+                                    resultTracker.addResult({
+                                        success: true,
+                                        status: result.status
+                                    });
+                                    await dbManager.updateNumberStatus(
+                                        numberRecord.id, 
+                                        result.status,
+                                        result.registrationDate
+                                    );
+                                } else {
+                                    resultTracker.addResult({
+                                        success: false,
+                                        status: 'ERROR'
+                                    });
+                                    await dbManager.updateNumberStatus(numberRecord.id, 'ERROR', null);
+                                }
+
+                                // Print stats immediately after processing each number
+                                await printStats();
+
+                            } catch (error) {
+                                resultTracker.addResult({
+                                    success: false,
+                                    status: 'ERROR'
+                                });
+                                console.error(`Error processing ${numberRecord.telephone}:`, error);
+                                await dbManager.updateNumberStatus(numberRecord.id, 'ERROR', null);
+                                // Print stats even after errors
+                                await printStats();
+                            } finally {
+                                // Always close the page, even if there's an error
+                                if (page) {
+                                    await page.close().catch(err => 
+                                        console.error('Error closing page:', err)
+                                    );
+                                }
+                            }
+                        });
+
+                        await Promise.all(pagePromises);
+
+                    } finally {
+                        // Close browsers
+                        await Promise.all(browsers.map(browser => browser.close().catch(() => {})));
+                    }
+
+                } finally {
+                    // Add a small delay between batches
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                }
+
+                // Update counts after each batch
+                totalProcessed += numbers.length;
+            }
+
+            // Print final results
+            const totalTime = (Date.now() - startTime) / 1000;
+            const timePerNumber = totalTime / totalProcessed;
+            
+            console.log('\n=== Final Results ===');
+            console.log(`Total processed: ${clc.yellow(totalProcessed)}`);
+            console.log(`Total time: ${clc.cyan(totalTime.toFixed(2))} seconds`);
+            console.log(`Avg time per number: ${clc.cyan(timePerNumber.toFixed(2))} seconds`);
+            console.log('=====================\n');
+
+            // After completing the run, check for ERROR status numbers and retry if any exist
+            const errorCount = await dbManager.resetErrorStatus();
+            
+            if (errorCount > 0) {
+                console.log(clc.yellow(`\nFound ${errorCount} failed numbers to retry. Starting retry process...\n`));
+                // Continue the loop to process the reset numbers
+                continue;
+            } else {
+                console.log(clc.green('\nNo failed numbers to retry. Processing complete!\n'));
+                shouldContinue = false;
+            }
+
+        } catch (error) {
+            console.error(`Fatal error:`, error);
+            shouldContinue = false;
+        }
+    }
+
+    await dbManager.close();
+}
+
+// Update launchBrowser function to remove request interception setup
 async function launchBrowser(userDataDir) {
     const proxyUrl = `${process.env.PROXY_HOST}:${process.env.PROXY_PORT}`;
 
@@ -105,6 +451,7 @@ async function launchBrowser(userDataDir) {
         defaultViewport: null,
     });
 
+    // Set user agent for all new pages
     browser.on('targetcreated', async (target) => {
         const page = await target.page();
         if (page) {
@@ -117,24 +464,7 @@ async function launchBrowser(userDataDir) {
     return browser;
 }
 
-async function launchBrowsers() {
-    return Promise.all(
-        Array.from({ length: CONCURRENT_BROWSERS }, async (_, index) => {
-            await new Promise(resolve => setTimeout(resolve, index * 2000));
-            return launchBrowser(`./chrome-data/chrome-data-${index + 1}`);
-        })
-    );
-}
-
-async function closeBrowser(browser) {
-    try {
-        await browser.close();
-    } catch (error) {
-        console.error('Error closing browser:', error);
-    }
-}
-
-// Captcha solving functions
+// Update solve2Captcha function to use the new format and include user agent
 async function solve2Captcha(sitekey, pageUrl) {
     try {
         console.log('Initiating 2captcha solve request...');
@@ -149,8 +479,12 @@ async function solve2Captcha(sitekey, pageUrl) {
                 isInvisible: false
             }
         };
+        
+      //  console.log('Task data:', JSON.stringify(taskData, null, 2));
 
+        // Create task request
         const createTaskResponse = await axios.post('https://api.2captcha.com/createTask', taskData);
+
         console.log('Create task response:', createTaskResponse.data);
 
         if (createTaskResponse.data.errorId !== 0) {
@@ -160,16 +494,21 @@ async function solve2Captcha(sitekey, pageUrl) {
         const taskId = createTaskResponse.data.taskId;
         console.log('Got task ID:', taskId);
 
+        // Poll for the result
         let attempts = 0;
         const maxAttempts = 60;
         
         while (attempts < maxAttempts) {
-            await new Promise(resolve => setTimeout(resolve, 10000));
+           // console.log(`Checking solution status, attempt ${attempts + 1}/${maxAttempts}`);
+
+           await new Promise(resolve => setTimeout(resolve, 10000));
             
             const resultResponse = await axios.post('https://api.2captcha.com/getTaskResult', {
                 clientKey: APIKEY,
                 taskId: taskId
             });
+
+           // console.log('Result response:', resultResponse.data);
 
             if (resultResponse.data.status === 'ready') {
                 console.log('Solution found!');
@@ -186,74 +525,110 @@ async function solve2Captcha(sitekey, pageUrl) {
     }
 }
 
-async function extractSitekey(page) {
-    const iframeUrls = await page.evaluate(() => {
-        const frames = document.getElementsByTagName('iframe');
-        return Array.from(frames).map(frame => ({
-            src: frame.src,
-            id: frame.id,
-            className: frame.className
-        }));
-    });
-
-    const recaptchaFrames = iframeUrls.filter(frame => frame.src.includes('recaptcha'));
-    const sitekey = recaptchaFrames.length > 0 ? 
-        new URL(recaptchaFrames[0].src).searchParams.get('k') : null;
-
-    if (!sitekey) {
-        throw new Error('Could not find reCAPTCHA sitekey');
-    }
-
-    console.log('Found sitekey:', sitekey);
-    return sitekey;
-}
-
-async function injectToken(page, token) {
-    await page.evaluate((token) => {
-        document.querySelector('#g-recaptcha-response').value = token;
-        document.querySelector('#g-recaptcha-response').style.display = 'block';
-        
-        try {
-            window.___grecaptcha_cfg.clients[0].K.K.callback(token);
-            console.log('Triggered callback successfully');
-        } catch (e) {
-            console.log('Failed to trigger callback:', e);
-            const form = document.querySelector('form');
-            if (form) form.submit();
-        }
-    }, token);
-}
-
-async function ensureTempDir() {
-    const tempDir = path.join(__dirname, 'temp');
-    if (!fs.existsSync(tempDir)) {
-        fs.mkdirSync(tempDir, { recursive: true });
-    }
-    return tempDir;
-}
-
-async function solveCaptchaChallenge(page, resultTracker) {
+async function solveCaptchaChallenge(page) {
     try {
-        console.log('Loading registration check page...');
+        console.log('Starting 2captcha solution with detailed debugging...');
+        
+        // Debug: Log all iframes on the page
+        const iframeUrls = await page.evaluate(() => {
+            const frames = document.getElementsByTagName('iframe');
+            return Array.from(frames).map(frame => ({
+                src: frame.src,
+                id: frame.id,
+                className: frame.className
+            }));
+        });
+      //  console.log('All iframes found on page:', JSON.stringify(iframeUrls, null, 2));
+
+        // Try to get sitekey from the URL if it exists in iframe src
+        const recaptchaFrames = iframeUrls.filter(frame => frame.src.includes('recaptcha'));
+        const sitekeyFromUrl = recaptchaFrames.length > 0 ? 
+            new URL(recaptchaFrames[0].src).searchParams.get('k') : null;
+        
+        console.log('Sitekey found in iframe URL:', sitekeyFromUrl);
+
+        if (!sitekeyFromUrl) {
+            console.error('Could not find reCAPTCHA sitekey in iframe URL');
+            return null;
+        }
+
+        // Get the page URL
+        const pageUrl = page.url();
+        console.log('Using page URL:', pageUrl);
+        console.log('Using sitekey:', sitekeyFromUrl);
+
+        try {
+            // Get solution from 2captcha
+            const solution = await solve2Captcha(sitekeyFromUrl, 'https://lnnte-dncl.gc.ca/en/Consumer/Check-your-registration');
+            console.log('Got solution from 2captcha:', clc.yellow(solution.slice(0, 50) + '...'));
+
+            // Insert the solution
+            await page.evaluate((token) => {
+                // Set textarea value
+                document.querySelector('#g-recaptcha-response').value = token;
+                
+                // Make textarea visible (sometimes needed)
+                document.querySelector('#g-recaptcha-response').style.display = 'block';
+                
+                // Try to trigger the callback
+                try {
+                    window.___grecaptcha_cfg.clients[0].K.K.callback(token);
+                    console.log('Triggered callback successfully');
+                } catch (e) {
+                    console.log('Failed to trigger callback:', e);
+                    // Alternative method to submit the form
+                    const form = document.querySelector('form');
+                    if (form) {
+                        form.submit();
+                    }
+                }
+            }, solution);
+
+            return solution;
+        } catch (error) {
+            console.error('Error solving captcha with 2captcha:', error);
+            return null;
+        }
+    } catch (error) {
+        console.error('Error in solveCaptchaChallenge:', error);
+        return null;
+    }
+}
+
+// Modify the attemptCaptcha function to use the new captcha solving approach
+async function attemptCaptcha(page, phoneNumber) {
+    try {
+        // Format the phone number before using it
+        const formattedPhone = formatPhoneNumber(phoneNumber);
+        
+        // Navigate to the initial page
+        console.log(`Loading registration check page...`);
         await page.goto('https://lnnte-dncl.gc.ca/en/Consumer/Check-your-registration/#!/', {
             waitUntil: 'domcontentloaded',
             timeout: 120000
         });
 
-        // Set Angular state
-        await page.evaluate(() => {
+        // Use Angular to directly set the state and phone number
+        console.log('Setting Angular state...');
+        await page.evaluate((phone) => {
             const element = document.querySelector('[ng-show="state==\'number\'"]');
-            if (!element) throw new Error('Could not find the Angular element');
-            
+            if (!element) {
+                throw new Error('Could not find the Angular element');
+            }
             const scope = angular.element(element).scope();
-            if (!scope) throw new Error('Could not get Angular scope');
-            
+            if (!scope) {
+                throw new Error('Could not get Angular scope');
+            }
             scope.model = scope.model || {};
+            scope.model.phone = phone;
             scope.state = 'confirm';
             scope.$apply();
-        });
+        }, formattedPhone);
 
-        // Wait for reCAPTCHA iframe
+        // Start timing here
+        const captchaStartTime = Date.now();
+
+        // Wait for reCAPTCHA iframe to be present
         await page.waitForFunction(() => {
             const frames = document.getElementsByTagName('iframe');
             return Array.from(frames).some(frame => 
@@ -261,122 +636,127 @@ async function solveCaptchaChallenge(page, resultTracker) {
                 frame.getBoundingClientRect().height > 0
             );
         }, { timeout: 25000 });
+        console.log('ReCAPTCHA iframe detected');
 
-        const sitekey = await extractSitekey(page);
-        const solution = await solve2Captcha(sitekey, page.url());
+        // Solve the captcha using 2captcha
+        console.log('Attempting to solve captcha with 2captcha...');
+        const solvedToken = await solveCaptchaChallenge(page);
+        
+        if (solvedToken) {
+            const captchaSolveTime = (Date.now() - captchaStartTime) / 1000;
+            console.log(`Successfully solved captcha and got token in ${captchaSolveTime.toFixed(2)} seconds`);
+            
+            // Make the API request with the token
+            console.log('Making API request with token...');
+            try {
+                const config = {
+                    method: 'post',
+                    url: 'https://public-api.lnnte-dncl.gc.ca/v1/Consumer/Check',
+                    headers: { 
+                        'accept': 'application/json, text/plain, */*', 
+                        'accept-language': 'en', 
+                        'authorization-captcha': solvedToken,
+                        'dnt': '1', 
+                        'origin': 'https://lnnte-dncl.gc.ca', 
+                        'priority': 'u=1, i', 
+                        'referer': 'https://lnnte-dncl.gc.ca/', 
+                        'sec-ch-ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"', 
+                        'sec-ch-ua-mobile': '?0', 
+                        'sec-ch-ua-platform': '"Windows"', 
+                        'sec-fetch-dest': 'empty', 
+                        'sec-fetch-mode': 'cors', 
+                        'sec-fetch-site': 'same-site', 
+                        'user-agent': USER_AGENT,
+                        'Content-Type': 'application/json'
+                    },
+                    data: JSON.stringify({
+                        "Phone": formattedPhone
+                    })
+                };
 
-        if (solution) {
-            await injectToken(page, solution);
-            resultTracker.addResult({ success: true, status: 'SUCCESS' });
-            
-            console.log('\n=== GOT TOKEN ===');
-            console.log(clc.yellow(solution.slice(0, 100) + '...'));
-            console.log('================\n');
-            
-            return solution;
+                const response = await axios.request(config);
+                console.log('\n=== API Response ===');
+                console.log(`Status Code: ${clc.green(response.status)}`);
+                console.log(`Phone Number: ${clc.yellow(formattedPhone)}`);
+                console.log(`Status: ${clc.green('ACTIVE')}`);
+                console.log(`Response Data: ${clc.cyan(JSON.stringify(response.data, null, 2))}`);
+                console.log('==================\n');
+                
+                return {
+                    status: 'ACTIVE',
+                    registrationDate: response.data.AddedAt
+                };
+
+            } catch (error) {
+                if (error.response?.status === 404) {
+                    console.log('\n=== API Response ===');
+                    console.log(`Status Code: ${clc.yellow(error.response.status)}`);
+                    console.log(`Phone Number: ${clc.yellow(formattedPhone)}`);
+                    console.log(`Status: ${clc.yellow('INACTIVE')}`);
+                    console.log('==================\n');
+                    
+                    return {
+                        status: 'INACTIVE',
+                        registrationDate: null
+                    };
+                }
+                
+                console.error('\n=== API Error ===');
+                console.error(`Status Code: ${clc.red(error.response?.status || 'N/A')}`);
+                console.error(`Error Message: ${clc.red(error.message)}`);
+                if (error.response?.data) {
+                    console.error(`Response Data: ${clc.red(JSON.stringify(error.response.data, null, 2))}`);
+                }
+                console.error('==================\n');
+                
+                return null;
+            }
         }
 
-        resultTracker.addResult({ success: false, status: 'ERROR' });
+        console.log('Failed to solve captcha');
         return null;
 
     } catch (error) {
-        console.error('Error in solveCaptchaChallenge:', error);
-        
-        // Take screenshot on navigation timeout error
-        if (error.name === 'TimeoutError' && error.message.includes('Navigation timeout')) {
-            try {
-                const tempDir = await ensureTempDir();
-                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                const screenshotPath = path.join(tempDir, `timeout-error-${timestamp}.png`);
-                
-                await page.screenshot({
-                    path: screenshotPath,
-                    fullPage: true
-                });
-                
-                console.log(`Screenshot saved to: ${screenshotPath}`);
-            } catch (screenshotError) {
-                console.error('Failed to save screenshot:', screenshotError);
-            }
-        }
-
-        resultTracker.addResult({ success: false, status: 'ERROR' });
+        console.error(clc.red(`Error processing ${phoneNumber}:`), clc.red(error));
         return null;
     }
 }
 
-// Main token generation function
-async function generateTokens(numbers, eventManager) {
-    const resultTracker = new ResultTracker();
-    const browsers = await launchBrowsers();
-    const totalConcurrentTabs = CONCURRENT_BROWSERS * TABS_PER_BROWSER;
+// Add after other constants
+const PORT = 5000;
+const app = express();
 
+// Add route handler
+app.get('/', async (req, res) => {
+    const db = new DatabaseManager();
     try {
-        let processedCount = 0;
-        while (processedCount < numbers.length) {
-            // Get current batch of numbers
-            const currentBatch = numbers.slice(
-                processedCount, 
-                processedCount + totalConcurrentTabs
-            );
-            
-            const tokenPromises = currentBatch.map(async (numberRecord, index) => {
-                await new Promise(resolve => setTimeout(resolve, index * 500));
-                
-                const browserIndex = Math.floor(index / TABS_PER_BROWSER);
-                const browser = browsers[browserIndex % CONCURRENT_BROWSERS];
-                const page = await browser.newPage();
-
-                try {
-                    await page.setUserAgent(USER_AGENT);
-                    const token = await solveCaptchaChallenge(page, resultTracker);
-                    
-                    if (token) {
-                        // Emit token with its associated number and ID
-                        eventManager.emit('tokenGenerated', { 
-                            token,
-                            id: numberRecord.id,
-                            telephone: numberRecord.telephone
-                        });
-                        processedCount++;
-                    }
-                } catch (error) {
-                    console.error('Error generating token:', error);
-                    eventManager.emit('tokenError', { 
-                        error: error.message,
-                        id: numberRecord.id,
-                        telephone: numberRecord.telephone
-                    });
-                } finally {
-                    await page.close().catch(console.error);
-                }
-            });
-
-            await Promise.all(tokenPromises);
-            await new Promise(resolve => setTimeout(resolve, 2000));
-        }
+        await db.init();
+        const html = await renderProcessingPage(db, req);
+        res.send(html);
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).send('Internal Server Error');
     } finally {
-        await Promise.all(browsers.map(closeBrowser));
-    }
-}
-
-// Replace everything after generateTokens with this simple execution block
-if (require.main === module) {
-    const eventManager = {
-        emit: (event, data) => {
-            if (event === 'tokenGenerated') {
-                console.log(clc.green('\nToken generated:'));
-                console.log(clc.yellow(data.token.slice(0, 50) + '...\n'));
-            } else if (event === 'tokenError') {
-                console.log(clc.red('\nError:', data.error, '\n'));
-            }
+        if (db) {
+            await db.close();
         }
-    };
+    }
+});
 
-    console.log(clc.cyan('Starting token generation...'));
-    generateTokens(3, eventManager)
-        .then(() => console.log(clc.green('Done!')))
-        .catch(console.error);
+// Modify the bottom of the file to include Express server
+if (require.main === module) {
+    // Start Express server
+    app.listen(PORT, () => {
+        console.log('\n=== Progress Server Running ===');
+        console.log(`Local:   http://localhost:${PORT}`);
+        console.log(`Network: http://${ip.address()}:${PORT}`);
+        console.log('===========================\n');
+    });
+
+    // Start the DNCL processing
+    extractCapchaTokens().catch(error => {
+        console.error('Fatal error in DNCL processing:', error);
+    });
 } else {
-    module.exports = generateTokens;
+    module.exports = extractCapchaTokens;
 }

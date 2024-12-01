@@ -23,7 +23,7 @@ async function renderProcessingResults(db, req) {
 
     // Get total pages for pagination
     const totalRecords = await db.getDb().get(
-        'SELECT COUNT(*) as count FROM numbers WHERE dncl_checked_at IS NOT NULL'
+        'SELECT COUNT(*) as count FROM numbers WHERE dncl_checked_at IS NOT NULL AND dncl_status IS NOT NULL'
     );
     const totalPages = Math.ceil(totalRecords.count / perPage);
 
@@ -38,6 +38,7 @@ async function renderProcessingResults(db, req) {
             dncl_checked_at
         FROM numbers 
         WHERE dncl_checked_at IS NOT NULL
+        AND dncl_status IS NOT NULL
         ORDER BY dncl_checked_at DESC
         LIMIT ? OFFSET ?
     `, [perPage, offset]);
@@ -49,7 +50,11 @@ async function renderProcessingResults(db, req) {
         return new Date(dateString).toLocaleDateString('en-CA', {
             year: 'numeric',
             month: 'short',
-            day: 'numeric'
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false // Use 24-hour format
         });
     }
 
@@ -66,7 +71,7 @@ async function renderProcessingResults(db, req) {
                 .status-active { color: red !important; font-weight: bold; }
                 .status-inactive { color: green !important; font-weight: bold; }
                 .status-error { color: orange !important; }
-                .status-invalid { color: gray !important; }
+                .status-invalid { color: #8B0000 !important; }
                 .status-processing { color: blue !important; }
                 .status-pending { color: #666 !important; }
                 .progress { height: 25px; }

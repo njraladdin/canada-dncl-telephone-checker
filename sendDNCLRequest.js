@@ -76,6 +76,14 @@ async function sendDNCLRequest(phoneNumber, token) {
             }
             console.error('=====================\n');
             
+            // Check if the error is due to invalid area code
+            if (error.response.data?.ModelState?.['model.Phone']?.includes('Phone number area code is invalid.')) {
+                return {
+                    status: 'INVALID',
+                    registrationDate: null
+                };
+            }
+            
             return {
                 status: 'ERROR',
                 registrationDate: null
