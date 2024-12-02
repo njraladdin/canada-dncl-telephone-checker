@@ -1,10 +1,10 @@
 const express = require('express');
 const ip = require('ip');
 const path = require('path');
-const renderProcessingPage = require('./renderProcessingPage');
-const DatabaseManager = require('./DatabaseManager');
-const extractCaptchaTokens2Captcha = require('./generateCaptchaTokensWith2Captcha');
-const extractCaptchaTokensAudio = require('./generateCaptchaTokensWithAudio');
+const renderProcessingPage = require('./progress/renderProcessingPage');
+const DatabaseManager = require('./db/DatabaseManager');
+const extractCaptchaTokens2Captcha = require('./captcha/generateCaptchaTokensWith2Captcha');
+const extractCaptchaTokensAudio = require('./captcha/generateCaptchaTokensWithAudio');
 
 // Configuration
 const CAPTCHA_METHOD = 'audio'; // Method to solve captcha: '2captcha' (paid service) or 'audio' (transcribe audio challenge)
