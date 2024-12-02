@@ -10,7 +10,7 @@ async function renderProcessingResults(db, req) {
     const counts = await db.getDb().get(`
         SELECT 
             COUNT(*) as total,
-            COUNT(CASE WHEN dncl_status IS NOT NULL THEN 1 END) as processed
+            COUNT(CASE WHEN dncl_status IN ('ACTIVE', 'INACTIVE', 'INVALID') THEN 1 END) as processed
         FROM numbers
         WHERE telephone IS NOT NULL 
         AND phone_type = 'MOBILE'
@@ -58,23 +58,80 @@ async function renderProcessingResults(db, req) {
         });
     }
 
+    // After the counts query, add this new query
+    const statusCounts = await db.getDb().all(`
+        SELECT 
+            LOWER(dncl_status) as status,
+            COUNT(*) as count
+        FROM numbers
+        WHERE dncl_status IS NOT NULL
+        GROUP BY dncl_status
+        ORDER BY count DESC
+    `);
+
+    // After getting statusCounts, let's create a dynamic color mapping
+    const statusColorMap = {
+        'active': '#ff6b6b',
+        'inactive': '#51cf66',
+        'invalid': '#ff8787',
+        'error': '#ffd43b',
+        'processing': '#74c0fc',
+        'pending': '#adb5bd'
+    };
+
+    // Log the existing statuses to see what we have
+    console.log('Existing statuses:', statusCounts.map(item => item.status));
+
     // Return HTML template
     return `
         <!DOCTYPE html>
-        <html>
+        <html data-bs-theme="dark">
         <head>
             <title>DNCL Processing Results</title>
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
             <style>
+                body {
+                    background-color: #212529;
+                    color: #e9ecef;
+                }
                 .table-container { margin: 20px; }
                 .pagination-container { margin: 20px; }
-                .status-active { color: red !important; font-weight: bold; }
-                .status-inactive { color: green !important; font-weight: bold; }
-                .status-error { color: orange !important; }
-                .status-invalid { color: #8B0000 !important; }
-                .status-processing { color: blue !important; }
-                .status-pending { color: #666 !important; }
-                .progress { height: 25px; }
+                .status-active { color: #ff6b6b !important; font-weight: bold; }
+                .status-inactive { color: #51cf66 !important; font-weight: bold; }
+                .status-error { color: #ffd43b !important; }
+                .status-invalid { color: #ff8787 !important; }
+                .status-processing { color: #74c0fc !important; }
+                .status-pending { color: #adb5bd !important; }
+                .progress { 
+                    height: 25px;
+                    background-color: #343a40;
+                }
+                .table {
+                    color: #e9ecef;
+                }
+                .card {
+                    background-color: #343a40;
+                    border-color: #495057;
+                }
+                .page-link {
+                    background-color: #343a40;
+                    border-color: #495057;
+                    color: #e9ecef;
+                }
+                .page-link:hover {
+                    background-color: #495057;
+                    border-color: #6c757d;
+                    color: #fff;
+                }
+                .page-item.active .page-link {
+                    background-color: #0d6efd;
+                    border-color: #0d6efd;
+                }
+                .card canvas {
+                    max-height: 300px;
+                    width: 100% !important;
+                    margin: 20px 0;
+                }
             </style>
         </head>
         <body>
@@ -96,6 +153,13 @@ async function renderProcessingResults(db, req) {
                         <p class="card-text">
                             Processed: ${counts.processed} out of ${counts.total} numbers
                         </p>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title">Status Distribution</h5>
+                        <canvas id="statusChart"></canvas>
                     </div>
                 </div>
 
@@ -151,6 +215,55 @@ async function renderProcessingResults(db, req) {
                     </nav>
                 </div>
             </div>
+
+            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+            <script>
+                const ctx = document.getElementById('statusChart');
+                const statuses = ${JSON.stringify(statusCounts.map(item => item.status))};
+                const colorMap = ${JSON.stringify(statusColorMap)};
+                
+                new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: statuses.map(status => status.toUpperCase()),
+                        datasets: [{
+                            label: 'Number of Records',
+                            data: ${JSON.stringify(statusCounts.map(item => item.count))},
+                            backgroundColor: statuses.map(status => colorMap[status] || '#adb5bd'), // fallback to gray if no color defined
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                grid: {
+                                    color: '#495057'
+                                },
+                                ticks: {
+                                    color: '#e9ecef'
+                                }
+                            },
+                            x: {
+                                grid: {
+                                    color: '#495057'
+                                },
+                                ticks: {
+                                    color: '#e9ecef'
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                labels: {
+                                    color: '#e9ecef'
+                                }
+                            }
+                        }
+                    }
+                });
+            </script>
         </body>
         </html>
     `;
