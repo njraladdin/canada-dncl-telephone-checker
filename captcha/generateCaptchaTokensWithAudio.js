@@ -7,19 +7,15 @@ const dotenv = require('dotenv');
 const fs = require('fs');
 const clc = require('cli-color');
 const undici = require('undici');
-const { sendDNCLRequest } = require('./DNCLRequestManager');
-const DatabaseManager = require('../db/DatabaseManager');
+const { sendDNCLRequest, formatPhoneNumber } = require('../sendDNCLRequest');
 const ResultTracker = require('../progress/ResultTracker');
 
-function formatPhoneNumber(phone) {
-    // Trim whitespace and take first 12 characters
-    return phone.trim().slice(0, 12);
-}
+
 dotenv.config();
 
 // Configuration
-const CONCURRENT_BROWSERS = 4;
-const BATCH_SIZE = 4;
+const CONCURRENT_BROWSERS = 6;
+const BATCH_SIZE = 6;
 
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const ALLOW_PROXY = false;

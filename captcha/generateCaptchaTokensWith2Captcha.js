@@ -6,14 +6,10 @@ const path = require('path');
 const dotenv = require('dotenv');
 const fs = require('fs');
 const clc = require('cli-color');
-const DatabaseManager = require('../db/DatabaseManager');
 const ResultTracker = require('../progress/ResultTracker');
-const { sendDNCLRequest } = require('./DNCLRequestManager');
+const { sendDNCLRequest, formatPhoneNumber } = require('../sendDNCLRequest');
 
-function formatPhoneNumber(phone) {
-    // Trim whitespace and take first 12 characters
-    return phone.trim().slice(0, 12);
-}
+
 dotenv.config();
 
 puppeteerExtra.use(StealthPlugin());
